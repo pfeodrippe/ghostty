@@ -3,6 +3,8 @@ STOCK_ZIG ?= $(abspath $(PROJECT_DIR)/../zig-stock-0.15.2/stage3-debug/bin/zig)
 STOCK_FLAGS ?= -Demit-macos-app=false -Demit-xcframework=false
 HOT_ZIG ?= $(abspath $(PROJECT_DIR)/../zig-ghostty-hot-0.15.2/stage4-debug-cmake-implfix/bin/zig)
 HOT_FLAGS ?= -Dhot=true -Demit-macos-app=false -Demit-xcframework=false
+STOCK_APP ?= $(abspath $(PROJECT_DIR)/macos/build/Debug/Ghostty.app)
+STOCK_APP_BIN ?= $(STOCK_APP)/Contents/MacOS/ghostty
 RUN_ARGS ?=
 
 init:
@@ -42,6 +44,25 @@ stock-build:
 stock-run:
 	$(STOCK_ZIG) build run $(STOCK_FLAGS) $(if $(RUN_ARGS),-- $(RUN_ARGS),)
 .PHONY: stock-run
+
+stock-open:
+	@activator_pid=''; \
+	( \
+		for _ in $$(seq 1 120); do \
+			pid=$$(ps -Ao pid=,command= | awk -v app="$(STOCK_APP_BIN)" '$$2 == app { print $$1; exit }'); \
+			if [ -n "$$pid" ]; then \
+				osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $$pid) to true" >/dev/null 2>&1 || true; \
+				exit 0; \
+			fi; \
+			sleep 1; \
+		done; \
+	) & activator_pid=$$!; \
+	$(STOCK_ZIG) build run $(STOCK_FLAGS) $(if $(RUN_ARGS),-- $(RUN_ARGS),); \
+	status=$$?; \
+	kill $$activator_pid >/dev/null 2>&1 || true; \
+	wait $$activator_pid >/dev/null 2>&1 || true; \
+	exit $$status
+.PHONY: stock-open
 
 stock-test:
 	$(STOCK_ZIG) build test $(STOCK_FLAGS)

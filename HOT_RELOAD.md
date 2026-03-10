@@ -13,6 +13,7 @@ Validate the stock path first:
 ```sh
 make stock-build
 make stock-run
+make stock-open
 make stock-test
 ```
 
@@ -61,7 +62,10 @@ On this machine (`macOS 15.1`, `Xcode 16.1`), the stock sibling Zig `0.15.2` pat
 ```sh
 make stock-build
 make stock-run RUN_ARGS=--version
+make stock-open
 make stock-test
 ```
+
+Use `make stock-open` when you want the actual Ghostty window to be promoted to the foreground while keeping the standard `zig build run` launch path. `make stock-run` is still fine for log-oriented validation.
 
 The hot path should only be resumed after keeping that stock baseline green.

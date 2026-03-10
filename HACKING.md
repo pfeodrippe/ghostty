@@ -39,6 +39,7 @@ here:
 | `zig build distcheck`           | Builds and validates a source tarball                                                                                  |
 | `make stock-build`              | Builds the local macOS-friendly stock Zig `0.15.2` workflow with the sibling compiler worktree                        |
 | `make stock-run`                | Runs the local stock Zig `0.15.2` macOS app workflow from the sibling compiler worktree                               |
+| `make stock-open`               | Runs the stock Zig `0.15.2` app workflow and brings the Ghostty window to the foreground                               |
 | `make stock-test`               | Runs the local stock Zig `0.15.2` test workflow from the sibling compiler worktree                                    |
 | `make hot-run`                  | Runs the macOS app with the sibling Zig `0.15.2` hot compiler and `-Dhot=true`                                        |
 
