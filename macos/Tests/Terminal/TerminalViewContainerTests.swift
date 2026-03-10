@@ -45,6 +45,7 @@ class MockConfig: Ghostty.Config {
     }
 }
 
+@MainActor
 struct TerminalViewContainerTests {
     @Test func glassAvailability() async throws {
         let view = await MockTerminalViewContainer {

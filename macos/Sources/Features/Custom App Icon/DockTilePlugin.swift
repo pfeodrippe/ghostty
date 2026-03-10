@@ -60,7 +60,7 @@ class DockTilePlugin: NSObject, NSDockTilePlugIn {
             .default()
             .publisher(for: .ghosttyIconDidChange)
             .map { [weak self] _ in self?.ghosttyUserDefaults?.appIcon }
-            .receive(on: DispatchQueue.global())
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] newIcon in self?.iconDidChange(newIcon, dockTile: dockTile) }
     }
 
@@ -126,18 +126,19 @@ class DockTilePlugin: NSObject, NSDockTilePlugIn {
 }
 
 private extension NSDockTile {
+    @MainActor @objc func applyGhosttyIcon(_ newIcon: NSImage) {
+        let iconView = NSImageView(frame: CGRect(origin: .zero, size: self.size))
+        iconView.wantsLayer = true
+        iconView.image = newIcon
+        self.contentView = iconView
+        self.display()
+    }
+
     func setIcon(_ newIcon: NSImage) {
-        // Update the Dock tile on the main thread.
-        DispatchQueue.main.async {
-            let iconView = NSImageView(frame: CGRect(origin: .zero, size: self.size))
-            iconView.wantsLayer = true
-            iconView.image = newIcon
-            self.contentView = iconView
-            self.display()
+        if Thread.isMainThread {
+            _ = perform(#selector(applyGhosttyIcon(_:)), with: newIcon)
+        } else {
+            performSelector(onMainThread: #selector(applyGhosttyIcon(_:)), with: newIcon, waitUntilDone: false)
         }
     }
 }
-
-// This is required because of the DispatchQueue call above. This doesn't
-// feel right but I don't know a better way to solve this.
-extension NSDockTile: @unchecked @retroactive Sendable {}

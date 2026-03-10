@@ -50,6 +50,8 @@ pub fn init(
 
     const env = try std.process.getEnvMap(b.allocator);
     const app_path = b.fmt("macos/build/{s}/Ghostty.app", .{xc_config});
+    const build_derived_data_path = xcodeDerivedDataPath(b, "build", xc_config);
+    const test_derived_data_path = xcodeDerivedDataPath(b, "test", xc_config);
 
     // Our step to build the Ghostty macOS app.
     const build = build: {
@@ -57,7 +59,7 @@ pub fn init(
         // we create a new empty environment.
         const env_map = try b.allocator.create(std.process.EnvMap);
         env_map.* = .init(b.allocator);
-        if (env.get("PATH")) |v| try env_map.put("PATH", v);
+        try copyXcodeEnvironment(env_map, &env);
 
         const step = RunStep.create(b, "xcodebuild");
         step.has_side_effects = true;
@@ -65,7 +67,10 @@ pub fn init(
         step.env_map = env_map;
         step.addArgs(&.{
             "xcodebuild",
-            "-target",
+            "-derivedDataPath",
+            build_derived_data_path,
+            "build",
+            "-scheme",
             "Ghostty",
             "-configuration",
             xc_config,
@@ -93,7 +98,7 @@ pub fn init(
     const xctest = xctest: {
         const env_map = try b.allocator.create(std.process.EnvMap);
         env_map.* = .init(b.allocator);
-        if (env.get("PATH")) |v| try env_map.put("PATH", v);
+        try copyXcodeEnvironment(env_map, &env);
 
         const step = RunStep.create(b, "xcodebuild test");
         step.has_side_effects = true;
@@ -102,12 +107,19 @@ pub fn init(
         step.addArgs(&.{
             "xcodebuild",
             "test",
+            "-derivedDataPath",
+            test_derived_data_path,
             "-scheme",
             "Ghostty",
             "-skip-testing",
             "GhosttyUITests",
         });
         if (xc_arch) |arch| step.addArgs(&.{ "-arch", arch });
+        step.addArgs(&.{
+            "CODE_SIGNING_ALLOWED=NO",
+            "CODE_SIGNING_REQUIRED=NO",
+            "CODE_SIGN_IDENTITY=",
+        });
 
         // We need the xcframework
         deps.xcframework.addStepDependencies(&step.step);
@@ -129,11 +141,11 @@ pub fn init(
         const disable_save_state = RunStep.create(b, "disable save state");
         disable_save_state.has_side_effects = true;
         disable_save_state.addArgs(&.{
-            "/usr/libexec/PlistBuddy",
-            "-c",
-            // We'll have to change this to `Set` if we ever put this
-            // into our Info.plist.
-            "Add :NSQuitAlwaysKeepsWindows bool false",
+            "plutil",
+            "-replace",
+            "NSQuitAlwaysKeepsWindows",
+            "-bool",
+            "NO",
             b.fmt("{s}/Contents/Info.plist", .{app_path}),
         });
         disable_save_state.expectExitCode(0);
@@ -157,6 +169,21 @@ pub fn init(
 
         // Configure how we're launching
         open.setEnvironmentVariable("GHOSTTY_MAC_LAUNCH_SOURCE", "zig_run");
+
+        if (config.hot) {
+            open.setEnvironmentVariable("ZIG_HOT_COMPILER", b.graph.zig_exe);
+            const workspace_path = b.path(".zig-hot").getPath3(b, &open.step).toString(b.graph.arena) catch @panic("OOM");
+            open.setEnvironmentVariable("ZIG_HOT_WORKSPACE", workspace_path);
+            if (b.graph.zig_lib_directory.path) |zig_lib_dir| {
+                open.setEnvironmentVariable("ZIG_HOT_ZIG_LIB_DIR", zig_lib_dir);
+            }
+            if (deps.xcframework.hot_manifest) |manifest| {
+                const manifest_rel_path = "share/ghostty/GhosttyKit.hot.json";
+                const manifest_install = b.addInstallFile(manifest, manifest_rel_path);
+                open.step.dependOn(&manifest_install.step);
+                open.setEnvironmentVariable("ZIG_HOT_MANIFEST", b.getInstallPath(.prefix, manifest_rel_path));
+            }
+        }
 
         if (b.args) |args| {
             open.addArgs(args);
@@ -183,6 +210,35 @@ pub fn init(
         .copy = copy,
         .xctest = xctest,
     };
+}
+
+fn copyXcodeEnvironment(
+    env_map: *std.process.EnvMap,
+    env: *const std.process.EnvMap,
+) !void {
+    for (&[_][]const u8{
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "USER",
+        "LOGNAME",
+    }) |key| {
+        if (env.get(key)) |value| try env_map.put(key, value);
+    }
+}
+
+fn xcodeDerivedDataPath(
+    b: *std.Build,
+    lane: []const u8,
+    xc_config: []const u8,
+) []const u8 {
+    return b.pathResolve(&.{
+        b.build_root.path orelse ".",
+        b.cache_root.path orelse ".zig-cache",
+        "xcodebuild",
+        lane,
+        xc_config,
+    });
 }
 
 pub fn install(self: *const Ghostty) void {

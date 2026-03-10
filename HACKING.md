@@ -37,6 +37,10 @@ here:
 | `zig build update-translations` | Updates Ghostty's translation strings (see the [Contributor's Guide on Localizing Ghostty](po/README_CONTRIBUTORS.md)) |
 | `zig build dist`                | Builds a source tarball                                                                                                |
 | `zig build distcheck`           | Builds and validates a source tarball                                                                                  |
+| `make stock-build`              | Builds the local macOS-friendly stock Zig `0.15.2` workflow with the sibling compiler worktree                        |
+| `make stock-run`                | Runs the local stock Zig `0.15.2` macOS app workflow from the sibling compiler worktree                               |
+| `make stock-test`               | Runs the local stock Zig `0.15.2` test workflow from the sibling compiler worktree                                    |
+| `make hot-run`                  | Runs the macOS app with the sibling Zig `0.15.2` hot compiler and `-Dhot=true`                                        |
 
 ## Extra Dependencies
 
@@ -46,6 +50,10 @@ dependencies:
 - `blueprint-compiler` (version 0.16.0 or newer)
 
 macOS users don't require any additional dependencies.
+
+## Hot Reload
+
+For the local Zig `0.15.2` hot backport workflow, see [HOT_RELOAD.md](HOT_RELOAD.md).
 
 ## Xcode Version and SDKs
 

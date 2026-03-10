@@ -38,12 +38,7 @@ pub fn create(b: *std.Build, opts: Options) *XCFrameworkStep {
 
     // We have to delete the old xcframework first since we're writing
     // to a static path.
-    const run_delete = run: {
-        const run = RunStep.create(b, b.fmt("xcframework delete {s}", .{opts.name}));
-        run.has_side_effects = true;
-        run.addArgs(&.{ "rm", "-rf", opts.out_path });
-        break :run run;
-    };
+    const run_delete = b.addRemoveDirTree(b.path(opts.out_path));
 
     // Then we run xcodebuild to create the framework.
     const run_create = run: {

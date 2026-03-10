@@ -34,6 +34,7 @@ sentry: bool = true,
 simd: bool = true,
 i18n: bool = true,
 wasm_shared: bool = true,
+hot: bool = false,
 
 /// Ghostty exe properties
 exe_entrypoint: ExeEntrypoint = .ghostty,
@@ -202,6 +203,12 @@ pub fn init(b: *std.Build, appVersion: []const u8) !Config {
         .linux, .freebsd => target.result.isGnuLibC(),
         else => false,
     };
+
+    config.hot = b.option(
+        bool,
+        "hot",
+        "Build Ghostty with Zig hot reload enabled for local development.",
+    ) orelse false;
 
     //---------------------------------------------------------------
     // Ghostty Exe Properties
@@ -401,7 +408,7 @@ pub fn init(b: *std.Build, appVersion: []const u8) !Config {
         bool,
         "emit-xcframework",
         "Build and install the xcframework for the macOS library.",
-    ) orelse builtin.target.os.tag.isDarwin() and
+    ) orelse !config.hot and builtin.target.os.tag.isDarwin() and
         target.result.os.tag == .macos and
         config.app_runtime == .none and
         (!config.emit_bench and

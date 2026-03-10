@@ -10,20 +10,36 @@ exe: *std.Build.Step.Compile,
 /// The install step for the executable.
 install_step: *std.Build.Step.InstallArtifact,
 
+/// Hot manifest emitted for hot-enabled builds.
+hot_manifest: ?std.Build.LazyPath,
+
 pub fn init(b: *std.Build, cfg: *const Config, deps: *const SharedDeps) !Ghostty {
+    var root_module_options: std.Build.Module.CreateOptions = .{
+        .root_source_file = b.path("src/main.zig"),
+        .target = cfg.target,
+        .optimize = cfg.optimize,
+        .strip = cfg.strip,
+        .omit_frame_pointer = cfg.strip,
+        .unwind_tables = if (cfg.strip) .none else .sync,
+    };
+    if (cfg.hot) {
+        if (!@hasField(std.Build.Module.CreateOptions, "hot_mode")) {
+            @panic("Ghostty hot mode requires a hot-enabled Zig compiler");
+        }
+        root_module_options.hot_mode = .flecs;
+    }
+
     const exe: *std.Build.Step.Compile = b.addExecutable(.{
         .name = "ghostty",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = cfg.target,
-            .optimize = cfg.optimize,
-            .strip = cfg.strip,
-            .omit_frame_pointer = cfg.strip,
-            .unwind_tables = if (cfg.strip) .none else .sync,
-        }),
-        // Crashes on x86_64 self-hosted on 0.15.1
-        .use_llvm = true,
+        .root_module = b.createModule(root_module_options),
+        // Non-hot builds keep LLVM because self-hosted x86_64 macOS has
+        // historically been unstable here. Hot mode needs self-hosted Mach-O.
+        .use_llvm = !cfg.hot,
     });
+    if (cfg.hot) {
+        exe.use_llvm = false;
+        exe.use_lld = false;
+    }
     const install_step = b.addInstallArtifact(exe, .{});
 
     // Set PIE if requested
@@ -60,6 +76,7 @@ pub fn init(b: *std.Build, cfg: *const Config, deps: *const SharedDeps) !Ghostty
     return .{
         .exe = exe,
         .install_step = install_step,
+        .hot_manifest = emittedHotManifest(exe, cfg.hot),
     };
 }
 
@@ -109,6 +126,14 @@ fn checkNixShell(exe: *std.Build.Step.Compile, cfg: *const Config) !void {
             "\x1b[0m",
         .{},
     );
+}
+
+fn emittedHotManifest(exe: *std.Build.Step.Compile, hot: bool) ?std.Build.LazyPath {
+    if (!hot) return null;
+    if (!@hasDecl(std.Build.Step.Compile, "getEmittedHotManifest")) {
+        @panic("Ghostty hot mode requires a hot-enabled Zig compiler");
+    }
+    return exe.getEmittedHotManifest();
 }
 
 /// ANSI escape codes for colored log output
