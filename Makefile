@@ -6,6 +6,8 @@ HOT_FLAGS ?= -Dhot=true -Demit-macos-app=false -Demit-xcframework=false
 STOCK_APP ?= $(abspath $(PROJECT_DIR)/macos/build/Debug/Ghostty.app)
 STOCK_APP_BIN ?= $(STOCK_APP)/Contents/MacOS/ghostty
 RUN_ARGS ?=
+HOT_RUNNER ?= $(abspath $(PROJECT_DIR)/tools/run_in_own_process_group.sh)
+HOT_ORPHAN_KILLER ?= $(abspath $(PROJECT_DIR)/tools/kill_hot_orphans.py)
 
 init:
 	@echo You probably want to run "zig build" instead.
@@ -69,13 +71,17 @@ stock-test:
 .PHONY: stock-test
 
 hot-build:
-	$(HOT_ZIG) build $(HOT_FLAGS)
+	$(HOT_RUNNER) $(HOT_ZIG) build $(HOT_FLAGS)
 .PHONY: hot-build
 
 hot-run:
-	$(HOT_ZIG) build run $(HOT_FLAGS) $(if $(RUN_ARGS),-- $(RUN_ARGS),)
+	$(HOT_RUNNER) $(HOT_ZIG) build run $(HOT_FLAGS) $(if $(RUN_ARGS),-- $(RUN_ARGS),)
 .PHONY: hot-run
 
 hot-test:
-	$(HOT_ZIG) build test $(HOT_FLAGS)
+	$(HOT_RUNNER) $(HOT_ZIG) build test $(HOT_FLAGS)
 .PHONY: hot-test
+
+hot-clean-orphans:
+	$(HOT_ORPHAN_KILLER)
+.PHONY: hot-clean-orphans
