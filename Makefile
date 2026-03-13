@@ -3,6 +3,9 @@ STOCK_ZIG ?= $(abspath $(PROJECT_DIR)/../zig-stock-0.15.2/stage3-debug/bin/zig)
 STOCK_FLAGS ?= -Demit-macos-app=false -Demit-xcframework=false
 HOT_ZIG ?= $(abspath $(PROJECT_DIR)/../zig-ghostty-hot-0.15.2/stage4-debug-cmake-implfix/bin/zig)
 HOT_FLAGS ?= -Dhot=true -Demit-macos-app=false -Demit-xcframework=false
+HOT_CACHE_DIR ?= $(abspath $(PROJECT_DIR)/.zig-cache-hot)
+HOT_GLOBAL_CACHE_DIR ?= $(abspath $(PROJECT_DIR)/.zig-global-cache-hot)
+HOT_JOBS ?= -j4
 STOCK_APP ?= $(abspath $(PROJECT_DIR)/macos/build/Debug/Ghostty.app)
 STOCK_APP_BIN ?= $(STOCK_APP)/Contents/MacOS/ghostty
 RUN_ARGS ?=
@@ -34,6 +37,8 @@ vendor/glad/include/glad/glad.h: vendor/glad/include/glad/gl.h
 clean:
 	rm -rf \
 		zig-out .zig-cache \
+		.zig-cache-hot \
+		.zig-global-cache-hot \
 		.zig-hot \
 		macos/build \
 		macos/GhosttyKit.xcframework
@@ -71,15 +76,15 @@ stock-test:
 .PHONY: stock-test
 
 hot-build:
-	$(HOT_RUNNER) $(HOT_ZIG) build $(HOT_FLAGS)
+	$(HOT_RUNNER) $(HOT_ZIG) build $(HOT_FLAGS) --cache-dir $(HOT_CACHE_DIR) --global-cache-dir $(HOT_GLOBAL_CACHE_DIR) $(HOT_JOBS)
 .PHONY: hot-build
 
 hot-run:
-	$(HOT_RUNNER) $(HOT_ZIG) build run $(HOT_FLAGS) $(if $(RUN_ARGS),-- $(RUN_ARGS),)
+	$(HOT_RUNNER) $(HOT_ZIG) build run $(HOT_FLAGS) --cache-dir $(HOT_CACHE_DIR) --global-cache-dir $(HOT_GLOBAL_CACHE_DIR) $(HOT_JOBS) $(if $(RUN_ARGS),-- $(RUN_ARGS),)
 .PHONY: hot-run
 
 hot-test:
-	$(HOT_RUNNER) $(HOT_ZIG) build test $(HOT_FLAGS)
+	$(HOT_RUNNER) $(HOT_ZIG) build test $(HOT_FLAGS) --cache-dir $(HOT_CACHE_DIR) --global-cache-dir $(HOT_GLOBAL_CACHE_DIR) $(HOT_JOBS)
 .PHONY: hot-test
 
 hot-clean-orphans:

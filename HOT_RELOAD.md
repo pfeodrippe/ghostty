@@ -36,6 +36,11 @@ They default to:
 
 - `HOT_ZIG=/Users/pfeodrippe/dev/zig-ghostty-hot-0.15.2/stage4-debug-cmake-implfix/bin/zig`
 - `HOT_FLAGS=-Dhot=true -Demit-macos-app=false -Demit-xcframework=false`
+- `HOT_CACHE_DIR=/Users/pfeodrippe/dev/ghostty-hot-0.15.2/.zig-cache-hot`
+- `HOT_GLOBAL_CACHE_DIR=/Users/pfeodrippe/dev/ghostty-hot-0.15.2/.zig-global-cache-hot`
+- `HOT_JOBS=-j4`
+
+The dedicated hot caches avoid blocking on stale locks in the default `.zig-cache` and global Zig cache while iterating on the hot compiler.
 
 ## What `-Dhot=true` does
 
