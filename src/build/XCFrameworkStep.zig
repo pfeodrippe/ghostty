@@ -35,6 +35,7 @@ step: *Step,
 
 pub fn create(b: *std.Build, opts: Options) *XCFrameworkStep {
     const self = b.allocator.create(XCFrameworkStep) catch @panic("OOM");
+    const output_path = resolvedOutputPath(b.allocator, b.build_root.path orelse ".", opts.out_path) catch @panic("OOM");
 
     // We have to delete the old xcframework first since we're writing
     // to a static path.
@@ -56,7 +57,7 @@ pub fn create(b: *std.Build, opts: Options) *XCFrameworkStep {
             }
         }
         run.addArg("-output");
-        run.addArg(opts.out_path);
+        run.addArg(output_path);
         run.expectExitCode(0);
         _ = run.captureStdOut();
         _ = run.captureStdErr();
@@ -69,4 +70,27 @@ pub fn create(b: *std.Build, opts: Options) *XCFrameworkStep {
     };
 
     return self;
+}
+
+fn resolvedOutputPath(
+    allocator: std.mem.Allocator,
+    build_root: []const u8,
+    out_path: []const u8,
+) ![]const u8 {
+    if (std.fs.path.isAbsolute(out_path)) return allocator.dupe(u8, out_path);
+    return std.fs.path.join(allocator, &.{ build_root, out_path });
+}
+
+test "resolved output path roots relative output in build root" {
+    const testing = std.testing;
+    const result = try resolvedOutputPath(testing.allocator, "/tmp/project", "macos/GhosttyKit.xcframework");
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("/tmp/project/macos/GhosttyKit.xcframework", result);
+}
+
+test "resolved output path preserves absolute output" {
+    const testing = std.testing;
+    const result = try resolvedOutputPath(testing.allocator, "/tmp/project", "/tmp/out/GhosttyKit.xcframework");
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("/tmp/out/GhosttyKit.xcframework", result);
 }

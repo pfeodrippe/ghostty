@@ -316,9 +316,11 @@ extension Ghostty {
 
         static func closeSurface(_ userdata: UnsafeMutableRawPointer?, processAlive: Bool) {
             let surface = self.surfaceUserdata(from: userdata)
-            NotificationCenter.default.post(name: Notification.ghosttyCloseSurface, object: surface, userInfo: [
-                "process_alive": processAlive,
-            ])
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: Notification.ghosttyCloseSurface, object: surface, userInfo: [
+                    "process_alive": processAlive,
+                ])
+            }
         }
 
         static func readClipboard(_ userdata: UnsafeMutableRawPointer?, location: ghostty_clipboard_e, state: UnsafeMutableRawPointer?) {

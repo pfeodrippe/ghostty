@@ -26,7 +26,7 @@ pub fn build(b: *std.Build) !void {
         .flags = &.{"-std=c99"},
     });
     lib.addCSourceFile(.{
-        .file = b.path("text/ext.c"),
+        .file = b.path("text/coretext_ext.c"),
     });
     lib.linkFramework("CoreFoundation");
     lib.linkFramework("CoreGraphics");

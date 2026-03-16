@@ -32,6 +32,15 @@ class BaseTerminalController: NSWindowController,
                               TerminalViewModel,
                               ClipboardConfirmationViewDelegate,
                               FullscreenDelegate {
+    /// Close confirmation should follow the live surface state, not the callback payload.
+    /// The callback can be delivered after the child process has already exited.
+    static func shouldConfirmSurfaceClose(
+        processExited: Bool,
+        notifiedProcessAlive: Bool
+    ) -> Bool {
+        !processExited && notifiedProcessAlive
+    }
+
     /// The app instance that this terminal view will represent.
     let ghostty: Ghostty.App
 
@@ -586,9 +595,13 @@ class BaseTerminalController: NSWindowController,
     @objc private func ghosttyDidCloseSurface(_ notification: Notification) {
         guard let target = notification.object as? Ghostty.SurfaceView else { return }
         guard let node = surfaceTree.root?.node(view: target) else { return }
+        let notifiedProcessAlive = (notification.userInfo?["process_alive"] as? Bool) ?? false
         closeSurface(
             node,
-            withConfirmation: (notification.userInfo?["process_alive"] as? Bool) ?? false)
+            withConfirmation: Self.shouldConfirmSurfaceClose(
+                processExited: target.processExited,
+                notifiedProcessAlive: notifiedProcessAlive
+            ))
     }
 
     @objc private func ghosttyDidNewSplit(_ notification: Notification) {

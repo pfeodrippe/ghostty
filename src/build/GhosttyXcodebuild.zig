@@ -47,6 +47,8 @@ pub fn init(
             else => @panic("unsupported macOS arch"),
         },
     };
+    const build_destination = try xcodeDestination(b.allocator, .build, xc_arch);
+    const test_destination = try xcodeDestination(b.allocator, .xctest, xc_arch);
 
     const env = try std.process.getEnvMap(b.allocator);
     const build_derived_data_path = xcodeDerivedDataPath(b, "build", xc_config);
@@ -76,10 +78,7 @@ pub fn init(
             "-configuration",
             xc_config,
         });
-
-        // If we have a specific architecture, we need to pass it
-        // to xcodebuild.
-        if (xc_arch) |arch| step.addArgs(&.{ "-arch", arch });
+        if (build_destination) |destination| step.addArgs(&.{ "-destination", destination });
 
         // We need the xcframework
         deps.xcframework.addStepDependencies(&step.step);
@@ -115,7 +114,7 @@ pub fn init(
             "-skip-testing",
             "GhosttyUITests",
         });
-        if (xc_arch) |arch| step.addArgs(&.{ "-arch", arch });
+        if (test_destination) |destination| step.addArgs(&.{ "-destination", destination });
         step.addArgs(&.{
             "CODE_SIGNING_ALLOWED=NO",
             "CODE_SIGNING_REQUIRED=NO",
@@ -267,6 +266,28 @@ fn installAppPath(
     });
 }
 
+const XcodeLane = enum {
+    build,
+    xctest,
+};
+
+fn xcodeDestination(
+    allocator: std.mem.Allocator,
+    lane: XcodeLane,
+    xc_arch: ?[]const u8,
+) !?[]const u8 {
+    if (xc_arch) |arch| {
+        return switch (lane) {
+            .build => try std.fmt.allocPrint(allocator, "platform=macOS,arch={s}", .{arch}),
+            .xctest => try std.fmt.allocPrint(allocator, "platform=macOS,arch={s}", .{arch}),
+        };
+    }
+    return switch (lane) {
+        .build => try allocator.dupe(u8, "generic/platform=macOS"),
+        .xctest => try allocator.dupe(u8, "platform=macOS"),
+    };
+}
+
 test "xcode app path uses derived data products dir" {
     const testing = std.testing;
     const result = try xcodeAppPath(testing.allocator, "/tmp/dd", "Debug");
@@ -282,6 +303,34 @@ test "install app path uses install root" {
     const result = try installAppPath(testing.allocator, "/tmp/out");
     defer testing.allocator.free(result);
     try testing.expectEqualStrings("/tmp/out/Ghostty.app", result);
+}
+
+test "native build xcode destination pins mac arch" {
+    const testing = std.testing;
+    const result = try xcodeDestination(testing.allocator, .build, "arm64");
+    defer testing.allocator.free(result.?);
+    try testing.expectEqualStrings("platform=macOS,arch=arm64", result.?);
+}
+
+test "native xctest xcode destination pins mac arch" {
+    const testing = std.testing;
+    const result = try xcodeDestination(testing.allocator, .xctest, "arm64");
+    defer testing.allocator.free(result.?);
+    try testing.expectEqualStrings("platform=macOS,arch=arm64", result.?);
+}
+
+test "universal build uses generic mac destination" {
+    const testing = std.testing;
+    const result = try xcodeDestination(testing.allocator, .build, null);
+    defer testing.allocator.free(result.?);
+    try testing.expectEqualStrings("generic/platform=macOS", result.?);
+}
+
+test "universal test uses host mac destination" {
+    const testing = std.testing;
+    const result = try xcodeDestination(testing.allocator, .xctest, null);
+    defer testing.allocator.free(result.?);
+    try testing.expectEqualStrings("platform=macOS", result.?);
 }
 
 pub fn install(self: *const Ghostty) void {
