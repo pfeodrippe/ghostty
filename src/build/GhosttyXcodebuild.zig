@@ -49,9 +49,9 @@ pub fn init(
     };
 
     const env = try std.process.getEnvMap(b.allocator);
-    const app_path = b.fmt("macos/build/{s}/Ghostty.app", .{xc_config});
     const build_derived_data_path = xcodeDerivedDataPath(b, "build", xc_config);
     const test_derived_data_path = xcodeDerivedDataPath(b, "test", xc_config);
+    const app_path = try xcodeAppPath(b.allocator, build_derived_data_path, xc_config);
 
     // Our step to build the Ghostty macOS app.
     const build = build: {
@@ -198,7 +198,7 @@ pub fn init(
     const copy = copy: {
         const step = RunStep.create(b, "copy app bundle");
         step.addArgs(&.{ "cp", "-R" });
-        step.addFileArg(b.path(app_path));
+        step.addFileArg(.{ .cwd_relative = app_path });
         step.addArg(b.fmt("{s}", .{b.install_path}));
         step.step.dependOn(&build.step);
         break :copy step;
@@ -239,6 +239,30 @@ fn xcodeDerivedDataPath(
         lane,
         xc_config,
     });
+}
+
+fn xcodeAppPath(
+    allocator: std.mem.Allocator,
+    build_derived_data_path: []const u8,
+    xc_config: []const u8,
+) ![]const u8 {
+    return try std.fs.path.join(allocator, &.{
+        build_derived_data_path,
+        "Build",
+        "Products",
+        xc_config,
+        "Ghostty.app",
+    });
+}
+
+test "xcode app path uses derived data products dir" {
+    const testing = std.testing;
+    const result = try xcodeAppPath(testing.allocator, "/tmp/dd", "Debug");
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings(
+        "/tmp/dd/Build/Products/Debug/Ghostty.app",
+        result,
+    );
 }
 
 pub fn install(self: *const Ghostty) void {

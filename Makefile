@@ -1,7 +1,9 @@
 PROJECT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 STOCK_ZIG ?= $(abspath $(PROJECT_DIR)/../zig-stock-0.15.2/stage3-debug/bin/zig)
 STOCK_FLAGS ?= -Demit-macos-app=false -Demit-xcframework=false
-HOT_ZIG ?= $(abspath $(PROJECT_DIR)/../zig-ghostty-hot-0.15.2/stage4-debug-cmake-implfix/bin/zig)
+HOT_ZIG_CURRENT := $(abspath $(PROJECT_DIR)/../zig-ghostty-hot-0.15.2/stage4-debug-cmake-implfix-current/bin/zig)
+HOT_ZIG_FALLBACK := $(abspath $(PROJECT_DIR)/../zig-ghostty-hot-0.15.2/stage4-debug-cmake-implfix/bin/zig)
+HOT_ZIG ?= $(if $(wildcard $(HOT_ZIG_CURRENT)),$(HOT_ZIG_CURRENT),$(HOT_ZIG_FALLBACK))
 HOT_FLAGS ?= -Dhot=true -Demit-macos-app=false -Demit-xcframework=false
 HOT_CACHE_DIR ?= $(abspath $(PROJECT_DIR)/.zig-cache-hot)
 HOT_GLOBAL_CACHE_DIR ?= $(abspath $(PROJECT_DIR)/.zig-global-cache-hot)
