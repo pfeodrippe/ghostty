@@ -9,6 +9,14 @@ const I18n = @import("GhosttyI18n.zig");
 const Resources = @import("GhosttyResources.zig");
 const XCFramework = @import("GhosttyXCFramework.zig");
 
+const ad_hoc_codesign_args = [_][]const u8{
+    "codesign",
+    "--force",
+    "--sign",
+    "-",
+    "--deep",
+};
+
 build: *std.Build.Step.Run,
 open: *std.Build.Step.Run,
 copy: *std.Build.Step.Run,
@@ -51,8 +59,8 @@ pub fn init(
     const test_destination = try xcodeDestination(b.allocator, .xctest, xc_arch);
 
     const env = try std.process.getEnvMap(b.allocator);
-    const build_derived_data_path = xcodeDerivedDataPath(b, "build", xc_config);
-    const test_derived_data_path = xcodeDerivedDataPath(b, "test", xc_config);
+    const build_derived_data_path = xcodeDerivedDataPath(b, config.hot, "build", xc_config);
+    const test_derived_data_path = xcodeDerivedDataPath(b, config.hot, "test", xc_config);
     const app_path = try xcodeAppPath(b.allocator, build_derived_data_path, xc_config);
     const run_app_path = try installAppPath(b.allocator, b.install_path);
 
@@ -139,12 +147,24 @@ pub fn init(
     // Our step to copy the app bundle to the install path.
     // We have to use `cp -R` because there are symlinks in the
     // bundle.
+    const remove_existing_copy = remove_existing_copy: {
+        const step = RunStep.create(b, "remove copied app bundle");
+        step.has_side_effects = true;
+        step.addArgs(&.{ "rm", "-rf" });
+        step.addArg(run_app_path);
+        step.expectExitCode(0);
+        step.step.dependOn(&build.step);
+        break :remove_existing_copy step;
+    };
+
     const copy = copy: {
         const step = RunStep.create(b, "copy app bundle");
+        step.has_side_effects = true;
         step.addArgs(&.{ "cp", "-R" });
         step.addFileArg(.{ .cwd_relative = app_path });
         step.addArg(b.fmt("{s}", .{b.install_path}));
-        step.step.dependOn(&build.step);
+        step.expectExitCode(0);
+        step.step.dependOn(&remove_existing_copy.step);
         break :copy step;
     };
 
@@ -165,6 +185,13 @@ pub fn init(
         disable_save_state.expectExitCode(0);
         disable_save_state.step.dependOn(&copy.step);
 
+        const resign = RunStep.create(b, "resign copied app bundle");
+        resign.has_side_effects = true;
+        resign.addArgs(&ad_hoc_codesign_args);
+        resign.addArg(run_app_path);
+        resign.expectExitCode(0);
+        resign.step.dependOn(&disable_save_state.step);
+
         const open = RunStep.create(b, "run Ghostty app");
         open.has_side_effects = true;
         open.cwd = b.path("");
@@ -174,7 +201,7 @@ pub fn init(
         )});
 
         open.step.dependOn(&copy.step);
-        open.step.dependOn(&disable_save_state.step);
+        open.step.dependOn(&resign.step);
 
         // This overrides our default behavior and forces logs to show
         // up on stderr (in addition to the centralized macOS log).
@@ -230,12 +257,14 @@ fn copyXcodeEnvironment(
 
 fn xcodeDerivedDataPath(
     b: *std.Build,
+    hot: bool,
     lane: []const u8,
     xc_config: []const u8,
 ) []const u8 {
     return b.pathResolve(&.{
         b.build_root.path orelse ".",
-        b.cache_root.path orelse ".zig-cache",
+        ".xcodebuild",
+        if (hot) "hot" else "stock",
         "xcodebuild",
         lane,
         xc_config,
@@ -298,11 +327,54 @@ test "xcode app path uses derived data products dir" {
     );
 }
 
+test "hot xcode derived data path is stable outside zig cache" {
+    const testing = std.testing;
+    var graph: std.Build.Graph = undefined;
+    graph.cache_root = .{ .path = "/tmp/ignored-cache-root" };
+
+    const build_root: std.Build.Cache.Directory = .{ .path = "/tmp/ghostty" };
+    var b: std.Build = undefined;
+    b.graph = &graph;
+    b.build_root = build_root;
+
+    const result = xcodeDerivedDataPath(&b, true, "build", "Debug");
+    try testing.expectEqualStrings(
+        "/tmp/ghostty/.xcodebuild/hot/xcodebuild/build/Debug",
+        result,
+    );
+}
+
+test "stock xcode derived data path is stable outside zig cache" {
+    const testing = std.testing;
+    var graph: std.Build.Graph = undefined;
+    graph.cache_root = .{ .path = "/tmp/ignored-cache-root" };
+
+    const build_root: std.Build.Cache.Directory = .{ .path = "/tmp/ghostty" };
+    var b: std.Build = undefined;
+    b.graph = &graph;
+    b.build_root = build_root;
+
+    const result = xcodeDerivedDataPath(&b, false, "test", "Debug");
+    try testing.expectEqualStrings(
+        "/tmp/ghostty/.xcodebuild/stock/xcodebuild/test/Debug",
+        result,
+    );
+}
+
 test "install app path uses install root" {
     const testing = std.testing;
     const result = try installAppPath(testing.allocator, "/tmp/out");
     defer testing.allocator.free(result);
     try testing.expectEqualStrings("/tmp/out/Ghostty.app", result);
+}
+
+test "copied app bundle is resigned ad hoc after plist mutation" {
+    const testing = std.testing;
+    try testing.expectEqualStrings("codesign", ad_hoc_codesign_args[0]);
+    try testing.expectEqualStrings("--force", ad_hoc_codesign_args[1]);
+    try testing.expectEqualStrings("--sign", ad_hoc_codesign_args[2]);
+    try testing.expectEqualStrings("-", ad_hoc_codesign_args[3]);
+    try testing.expectEqualStrings("--deep", ad_hoc_codesign_args[4]);
 }
 
 test "native build xcode destination pins mac arch" {

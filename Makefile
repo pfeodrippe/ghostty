@@ -8,6 +8,8 @@ HOT_FLAGS ?= -Dhot=true -Demit-macos-app=false -Demit-xcframework=false
 HOT_CACHE_DIR ?= $(abspath $(PROJECT_DIR)/.zig-cache-hot)
 HOT_GLOBAL_CACHE_DIR ?= $(abspath $(PROJECT_DIR)/.zig-global-cache-hot)
 HOT_JOBS ?= -j4
+HOT_ORPHAN_ROOTS ?= $(HOT_CACHE_DIR) $(notdir $(HOT_CACHE_DIR)) $(HOT_GLOBAL_CACHE_DIR) $(notdir $(HOT_GLOBAL_CACHE_DIR))
+HOT_CACHE_RESOLVER ?= $(abspath $(PROJECT_DIR)/tools/resolve_hot_cache_dirs.py)
 STOCK_APP ?= $(abspath $(PROJECT_DIR)/macos/build/Debug/Ghostty.app)
 STOCK_APP_BIN ?= $(STOCK_APP)/Contents/MacOS/ghostty
 RUN_ARGS ?=
@@ -78,17 +80,26 @@ stock-test:
 .PHONY: stock-test
 
 hot-build:
-	$(HOT_RUNNER) $(HOT_ZIG) build $(HOT_FLAGS) --cache-dir $(HOT_CACHE_DIR) --global-cache-dir $(HOT_GLOBAL_CACHE_DIR) $(HOT_JOBS)
+	@$(HOT_ORPHAN_KILLER) $(HOT_ORPHAN_ROOTS) >/dev/null 2>&1 || true
+	@set -eu; \
+	eval "$$(python3 $(HOT_CACHE_RESOLVER) $(HOT_CACHE_DIR) $(HOT_GLOBAL_CACHE_DIR))"; \
+	$(HOT_RUNNER) $(HOT_ZIG) build $(HOT_FLAGS) --cache-dir "$$HOT_CACHE_DIR" --global-cache-dir "$$HOT_GLOBAL_CACHE_DIR" $(HOT_JOBS)
 .PHONY: hot-build
 
 hot-run:
-	$(HOT_RUNNER) $(HOT_ZIG) build run $(HOT_FLAGS) --cache-dir $(HOT_CACHE_DIR) --global-cache-dir $(HOT_GLOBAL_CACHE_DIR) $(HOT_JOBS) $(if $(RUN_ARGS),-- $(RUN_ARGS),)
+	@$(HOT_ORPHAN_KILLER) $(HOT_ORPHAN_ROOTS) >/dev/null 2>&1 || true
+	@set -eu; \
+	eval "$$(python3 $(HOT_CACHE_RESOLVER) $(HOT_CACHE_DIR) $(HOT_GLOBAL_CACHE_DIR))"; \
+	$(HOT_RUNNER) $(HOT_ZIG) build run $(HOT_FLAGS) --cache-dir "$$HOT_CACHE_DIR" --global-cache-dir "$$HOT_GLOBAL_CACHE_DIR" $(HOT_JOBS) $(if $(RUN_ARGS),-- $(RUN_ARGS),)
 .PHONY: hot-run
 
 hot-test:
-	$(HOT_RUNNER) $(HOT_ZIG) build test $(HOT_FLAGS) --cache-dir $(HOT_CACHE_DIR) --global-cache-dir $(HOT_GLOBAL_CACHE_DIR) $(HOT_JOBS)
+	@$(HOT_ORPHAN_KILLER) $(HOT_ORPHAN_ROOTS) >/dev/null 2>&1 || true
+	@set -eu; \
+	eval "$$(python3 $(HOT_CACHE_RESOLVER) $(HOT_CACHE_DIR) $(HOT_GLOBAL_CACHE_DIR))"; \
+	$(HOT_RUNNER) $(HOT_ZIG) build test $(HOT_FLAGS) --cache-dir "$$HOT_CACHE_DIR" --global-cache-dir "$$HOT_GLOBAL_CACHE_DIR" $(HOT_JOBS)
 .PHONY: hot-test
 
 hot-clean-orphans:
-	$(HOT_ORPHAN_KILLER)
+	$(HOT_ORPHAN_KILLER) $(HOT_ORPHAN_ROOTS)
 .PHONY: hot-clean-orphans
