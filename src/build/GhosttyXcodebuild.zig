@@ -52,6 +52,7 @@ pub fn init(
     const build_derived_data_path = xcodeDerivedDataPath(b, "build", xc_config);
     const test_derived_data_path = xcodeDerivedDataPath(b, "test", xc_config);
     const app_path = try xcodeAppPath(b.allocator, build_derived_data_path, xc_config);
+    const run_app_path = try installAppPath(b.allocator, b.install_path);
 
     // Our step to build the Ghostty macOS app.
     const build = build: {
@@ -136,7 +137,21 @@ pub fn init(
         break :xctest step;
     };
 
-    // Our step to open the resulting Ghostty app.
+    // Our step to copy the app bundle to the install path.
+    // We have to use `cp -R` because there are symlinks in the
+    // bundle.
+    const copy = copy: {
+        const step = RunStep.create(b, "copy app bundle");
+        step.addArgs(&.{ "cp", "-R" });
+        step.addFileArg(.{ .cwd_relative = app_path });
+        step.addArg(b.fmt("{s}", .{b.install_path}));
+        step.step.dependOn(&build.step);
+        break :copy step;
+    };
+
+    // Our step to open the resulting Ghostty app. Run the copied
+    // bundle so we don't mutate the signed app inside Xcode's
+    // derived-data cache.
     const open = open: {
         const disable_save_state = RunStep.create(b, "disable save state");
         disable_save_state.has_side_effects = true;
@@ -146,21 +161,20 @@ pub fn init(
             "NSQuitAlwaysKeepsWindows",
             "-bool",
             "NO",
-            b.fmt("{s}/Contents/Info.plist", .{app_path}),
+            b.fmt("{s}/Contents/Info.plist", .{run_app_path}),
         });
         disable_save_state.expectExitCode(0);
-        disable_save_state.step.dependOn(&build.step);
+        disable_save_state.step.dependOn(&copy.step);
 
         const open = RunStep.create(b, "run Ghostty app");
         open.has_side_effects = true;
         open.cwd = b.path("");
         open.addArgs(&.{b.fmt(
             "{s}/Contents/MacOS/ghostty",
-            .{app_path},
+            .{run_app_path},
         )});
 
-        // Open depends on the app
-        open.step.dependOn(&build.step);
+        open.step.dependOn(&copy.step);
         open.step.dependOn(&disable_save_state.step);
 
         // This overrides our default behavior and forces logs to show
@@ -190,18 +204,6 @@ pub fn init(
         }
 
         break :open open;
-    };
-
-    // Our step to copy the app bundle to the install path.
-    // We have to use `cp -R` because there are symlinks in the
-    // bundle.
-    const copy = copy: {
-        const step = RunStep.create(b, "copy app bundle");
-        step.addArgs(&.{ "cp", "-R" });
-        step.addFileArg(.{ .cwd_relative = app_path });
-        step.addArg(b.fmt("{s}", .{b.install_path}));
-        step.step.dependOn(&build.step);
-        break :copy step;
     };
 
     return .{
@@ -255,6 +257,16 @@ fn xcodeAppPath(
     });
 }
 
+fn installAppPath(
+    allocator: std.mem.Allocator,
+    install_path: []const u8,
+) ![]const u8 {
+    return try std.fs.path.join(allocator, &.{
+        install_path,
+        "Ghostty.app",
+    });
+}
+
 test "xcode app path uses derived data products dir" {
     const testing = std.testing;
     const result = try xcodeAppPath(testing.allocator, "/tmp/dd", "Debug");
@@ -263,6 +275,13 @@ test "xcode app path uses derived data products dir" {
         "/tmp/dd/Build/Products/Debug/Ghostty.app",
         result,
     );
+}
+
+test "install app path uses install root" {
+    const testing = std.testing;
+    const result = try installAppPath(testing.allocator, "/tmp/out");
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("/tmp/out/Ghostty.app", result);
 }
 
 pub fn install(self: *const Ghostty) void {
