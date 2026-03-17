@@ -10,6 +10,13 @@ HOT_GLOBAL_CACHE_DIR ?= $(abspath $(PROJECT_DIR)/.zig-global-cache-hot)
 HOT_JOBS ?= -j4
 HOT_ORPHAN_ROOTS ?= $(HOT_CACHE_DIR) $(notdir $(HOT_CACHE_DIR)) $(HOT_GLOBAL_CACHE_DIR) $(notdir $(HOT_GLOBAL_CACHE_DIR))
 HOT_CACHE_RESOLVER ?= $(abspath $(PROJECT_DIR)/tools/resolve_hot_cache_dirs.py)
+STAGE4_ZIG ?= $(HOT_ZIG)
+STAGE4_FLAGS ?= $(STOCK_FLAGS)
+STAGE4_BACKEND_FLAGS ?= -Duse-llvm=false -Duse-lld=false
+STAGE4_CACHE_DIR ?= $(abspath $(PROJECT_DIR)/.zig-cache-stage4)
+STAGE4_GLOBAL_CACHE_DIR ?= $(abspath $(PROJECT_DIR)/.zig-global-cache-stage4)
+STAGE4_JOBS ?= -j4
+STAGE4_ORPHAN_ROOTS ?= $(STAGE4_CACHE_DIR) $(notdir $(STAGE4_CACHE_DIR)) $(STAGE4_GLOBAL_CACHE_DIR) $(notdir $(STAGE4_GLOBAL_CACHE_DIR))
 STOCK_APP ?= $(abspath $(PROJECT_DIR)/macos/build/Debug/Ghostty.app)
 STOCK_APP_BIN ?= $(STOCK_APP)/Contents/MacOS/ghostty
 RUN_ARGS ?=
@@ -43,6 +50,8 @@ clean:
 		zig-out .zig-cache \
 		.zig-cache-hot \
 		.zig-global-cache-hot \
+		.zig-cache-stage4 \
+		.zig-global-cache-stage4 \
 		.zig-hot \
 		macos/build \
 		macos/GhosttyKit.xcframework
@@ -99,6 +108,20 @@ hot-test:
 	eval "$$(python3 $(HOT_CACHE_RESOLVER) $(HOT_CACHE_DIR) $(HOT_GLOBAL_CACHE_DIR))"; \
 	$(HOT_RUNNER) $(HOT_ZIG) build test $(HOT_FLAGS) --cache-dir "$$HOT_CACHE_DIR" --global-cache-dir "$$HOT_GLOBAL_CACHE_DIR" $(HOT_JOBS)
 .PHONY: hot-test
+
+stage4-build:
+	@$(HOT_ORPHAN_KILLER) $(STAGE4_ORPHAN_ROOTS) >/dev/null 2>&1 || true
+	@set -eu; \
+	eval "$$(python3 $(HOT_CACHE_RESOLVER) $(STAGE4_CACHE_DIR) $(STAGE4_GLOBAL_CACHE_DIR))"; \
+	$(HOT_RUNNER) $(STAGE4_ZIG) build $(STAGE4_FLAGS) $(STAGE4_BACKEND_FLAGS) --cache-dir "$$HOT_CACHE_DIR" --global-cache-dir "$$HOT_GLOBAL_CACHE_DIR" $(STAGE4_JOBS)
+.PHONY: stage4-build
+
+stage4-run:
+	@$(HOT_ORPHAN_KILLER) $(STAGE4_ORPHAN_ROOTS) >/dev/null 2>&1 || true
+	@set -eu; \
+	eval "$$(python3 $(HOT_CACHE_RESOLVER) $(STAGE4_CACHE_DIR) $(STAGE4_GLOBAL_CACHE_DIR))"; \
+	$(HOT_RUNNER) $(STAGE4_ZIG) build run $(STAGE4_FLAGS) $(STAGE4_BACKEND_FLAGS) --cache-dir "$$HOT_CACHE_DIR" --global-cache-dir "$$HOT_GLOBAL_CACHE_DIR" $(STAGE4_JOBS) $(if $(RUN_ARGS),-- $(RUN_ARGS),)
+.PHONY: stage4-run
 
 hot-clean-orphans:
 	$(HOT_ORPHAN_KILLER) $(HOT_ORPHAN_ROOTS)

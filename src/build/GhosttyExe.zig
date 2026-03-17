@@ -32,14 +32,9 @@ pub fn init(b: *std.Build, cfg: *const Config, deps: *const SharedDeps) !Ghostty
     const exe: *std.Build.Step.Compile = b.addExecutable(.{
         .name = "ghostty",
         .root_module = b.createModule(root_module_options),
-        // Non-hot builds keep LLVM because self-hosted x86_64 macOS has
-        // historically been unstable here. Hot mode needs self-hosted Mach-O.
-        .use_llvm = !cfg.hot,
+        .use_llvm = cfg.use_llvm,
     });
-    if (cfg.hot) {
-        exe.use_llvm = false;
-        exe.use_lld = false;
-    }
+    exe.use_lld = cfg.use_lld;
     const install_step = b.addInstallArtifact(exe, .{});
 
     // Set PIE if requested

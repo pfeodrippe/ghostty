@@ -44,6 +44,8 @@ version: std.SemanticVersion = .{ .major = 0, .minor = 0, .patch = 0 },
 pie: bool = false,
 strip: bool = false,
 patch_rpath: ?[]const u8 = null,
+use_llvm: bool = true,
+use_lld: bool = true,
 
 /// Artifacts
 flatpak: bool = false,
@@ -209,6 +211,18 @@ pub fn init(b: *std.Build, appVersion: []const u8) !Config {
         "hot",
         "Build Ghostty with Zig hot reload enabled for local development.",
     ) orelse false;
+
+    config.use_llvm = b.option(
+        bool,
+        "use-llvm",
+        "Build Ghostty app artifacts with the LLVM backend. Defaults to false for hot builds and true otherwise.",
+    ) orelse !config.hot;
+
+    config.use_lld = b.option(
+        bool,
+        "use-lld",
+        "Link Ghostty app artifacts with LLD. Defaults to false when LLVM is disabled and true otherwise.",
+    ) orelse config.use_llvm;
 
     //---------------------------------------------------------------
     // Ghostty Exe Properties

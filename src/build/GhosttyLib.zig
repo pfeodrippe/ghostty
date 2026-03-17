@@ -38,15 +38,9 @@ pub fn initStatic(
     const lib = b.addLibrary(.{
         .name = "ghostty",
         .root_module = b.createModule(root_module_options),
-
-        // Non-hot builds keep LLVM because self-hosted x86_64 macOS has
-        // historically been unstable here. Hot mode needs self-hosted Mach-O.
-        .use_llvm = !deps.config.hot,
+        .use_llvm = deps.config.use_llvm,
     });
-    if (deps.config.hot) {
-        lib.use_llvm = false;
-        lib.use_lld = false;
-    }
+    lib.use_lld = deps.config.use_lld;
     lib.linkLibC();
 
     // These must be bundled since we're compiling into a static lib.
@@ -109,15 +103,9 @@ pub fn initShared(
         .name = "ghostty",
         .linkage = .dynamic,
         .root_module = b.createModule(root_module_options),
-
-        // Non-hot builds keep LLVM because self-hosted x86_64 macOS has
-        // historically been unstable here. Hot mode needs self-hosted Mach-O.
-        .use_llvm = !deps.config.hot,
+        .use_llvm = deps.config.use_llvm,
     });
-    if (deps.config.hot) {
-        lib.use_llvm = false;
-        lib.use_lld = false;
-    }
+    lib.use_lld = deps.config.use_lld;
     _ = try deps.add(lib);
 
     // Get our debug symbols
