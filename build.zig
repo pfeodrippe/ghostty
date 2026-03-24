@@ -208,6 +208,21 @@ pub fn build(b: *std.Build) !void {
                 b.getInstallPath(.prefix, "share/ghostty"),
             );
 
+            if (config.hot) {
+                run_cmd.setEnvironmentVariable("ZIG_HOT_COMPILER", b.graph.zig_exe);
+                const workspace_path = b.path(".zig-hot").getPath3(b, &run_cmd.step).toString(b.graph.arena) catch @panic("OOM");
+                run_cmd.setEnvironmentVariable("ZIG_HOT_WORKSPACE", workspace_path);
+                if (b.graph.zig_lib_directory.path) |zig_lib_dir| {
+                    run_cmd.setEnvironmentVariable("ZIG_HOT_ZIG_LIB_DIR", zig_lib_dir);
+                }
+                if (exe.hot_manifest) |manifest| {
+                    const manifest_rel_path = "share/ghostty/ghostty.hot.json";
+                    const manifest_install = b.addInstallFile(manifest, manifest_rel_path);
+                    run_cmd.step.dependOn(&manifest_install.step);
+                    run_cmd.setEnvironmentVariable("ZIG_HOT_MANIFEST", b.getInstallPath(.prefix, manifest_rel_path));
+                }
+            }
+
             run_step.dependOn(&run_cmd.step);
             break :run;
         }

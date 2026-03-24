@@ -9,6 +9,7 @@ const Target = @import("xcframework.zig").Target;
 
 xcframework: *XCFrameworkStep,
 target: Target,
+hot_manifest: ?std.Build.LazyPath,
 
 pub fn init(
     b: *std.Build,
@@ -88,6 +89,10 @@ pub fn init(
     return .{
         .xcframework = xcframework,
         .target = target,
+        .hot_manifest = switch (target) {
+            .universal => null,
+            .native => macos_native.hot_manifest,
+        },
     };
 }
 

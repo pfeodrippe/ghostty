@@ -158,6 +158,21 @@ pub fn init(
         // Configure how we're launching
         open.setEnvironmentVariable("GHOSTTY_MAC_LAUNCH_SOURCE", "zig_run");
 
+        if (config.hot) {
+            open.setEnvironmentVariable("ZIG_HOT_COMPILER", b.graph.zig_exe);
+            const workspace_path = b.path(".zig-hot").getPath3(b, &open.step).toString(b.graph.arena) catch @panic("OOM");
+            open.setEnvironmentVariable("ZIG_HOT_WORKSPACE", workspace_path);
+            if (b.graph.zig_lib_directory.path) |zig_lib_dir| {
+                open.setEnvironmentVariable("ZIG_HOT_ZIG_LIB_DIR", zig_lib_dir);
+            }
+            if (deps.xcframework.hot_manifest) |manifest| {
+                const manifest_rel_path = "share/ghostty/GhosttyKit.hot.json";
+                const manifest_install = b.addInstallFile(manifest, manifest_rel_path);
+                open.step.dependOn(&manifest_install.step);
+                open.setEnvironmentVariable("ZIG_HOT_MANIFEST", b.getInstallPath(.prefix, manifest_rel_path));
+            }
+        }
+
         if (b.args) |args| {
             open.addArgs(args);
         }

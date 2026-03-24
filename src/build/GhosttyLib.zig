@@ -13,21 +13,30 @@ step: *std.Build.Step,
 /// The final static library file
 output: std.Build.LazyPath,
 dsym: ?std.Build.LazyPath,
+hot_manifest: ?std.Build.LazyPath,
 
 pub fn initStatic(
     b: *std.Build,
     deps: *const SharedDeps,
 ) !GhosttyLib {
+    var root_module_options: std.Build.Module.CreateOptions = .{
+        .root_source_file = b.path("src/main_c.zig"),
+        .target = deps.config.target,
+        .optimize = deps.config.optimize,
+        .strip = deps.config.strip,
+        .omit_frame_pointer = deps.config.strip,
+        .unwind_tables = if (deps.config.strip) .none else .sync,
+    };
+    if (deps.config.hot) {
+        if (!@hasField(std.Build.Module.CreateOptions, "hot_mode")) {
+            @panic("Ghostty hot mode requires a hot-enabled Zig compiler");
+        }
+        root_module_options.hot_mode = .flecs;
+    }
+
     const lib = b.addLibrary(.{
         .name = "ghostty",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main_c.zig"),
-            .target = deps.config.target,
-            .optimize = deps.config.optimize,
-            .strip = deps.config.strip,
-            .omit_frame_pointer = deps.config.strip,
-            .unwind_tables = if (deps.config.strip) .none else .sync,
-        }),
+        .root_module = b.createModule(root_module_options),
 
         // Fails on self-hosted x86_64 on macOS
         .use_llvm = true,
@@ -48,6 +57,7 @@ pub fn initStatic(
         .step = &lib.step,
         .output = lib.getEmittedBin(),
         .dsym = null,
+        .hot_manifest = emittedHotManifest(lib, deps.config.hot),
     };
 
     // Create a static lib that contains all our dependencies.
@@ -64,6 +74,7 @@ pub fn initStatic(
 
         // Static libraries cannot have dSYMs because they aren't linked.
         .dsym = null,
+        .hot_manifest = emittedHotManifest(lib, deps.config.hot),
     };
 }
 
@@ -71,17 +82,25 @@ pub fn initShared(
     b: *std.Build,
     deps: *const SharedDeps,
 ) !GhosttyLib {
+    var root_module_options: std.Build.Module.CreateOptions = .{
+        .root_source_file = b.path("src/main_c.zig"),
+        .target = deps.config.target,
+        .optimize = deps.config.optimize,
+        .strip = deps.config.strip,
+        .omit_frame_pointer = deps.config.strip,
+        .unwind_tables = if (deps.config.strip) .none else .sync,
+    };
+    if (deps.config.hot) {
+        if (!@hasField(std.Build.Module.CreateOptions, "hot_mode")) {
+            @panic("Ghostty hot mode requires a hot-enabled Zig compiler");
+        }
+        root_module_options.hot_mode = .flecs;
+    }
+
     const lib = b.addLibrary(.{
         .name = "ghostty",
         .linkage = .dynamic,
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main_c.zig"),
-            .target = deps.config.target,
-            .optimize = deps.config.optimize,
-            .strip = deps.config.strip,
-            .omit_frame_pointer = deps.config.strip,
-            .unwind_tables = if (deps.config.strip) .none else .sync,
-        }),
+        .root_module = b.createModule(root_module_options),
 
         // Fails on self-hosted x86_64
         .use_llvm = true,
@@ -106,6 +125,7 @@ pub fn initShared(
         .step = &lib.step,
         .output = lib.getEmittedBin(),
         .dsym = dsymutil,
+        .hot_manifest = emittedHotManifest(lib, deps.config.hot),
     };
 }
 
@@ -136,6 +156,7 @@ pub fn initMacOSUniversal(
         // You can't run dsymutil on a universal binary, you have to
         // do it on the individual binaries.
         .dsym = null,
+        .hot_manifest = null,
     };
 }
 
@@ -152,4 +173,12 @@ pub fn installHeader(self: *const GhosttyLib) void {
         "ghostty.h",
     );
     b.getInstallStep().dependOn(&header_install.step);
+}
+
+fn emittedHotManifest(lib: *std.Build.Step.Compile, hot: bool) ?std.Build.LazyPath {
+    if (!hot) return null;
+    if (!@hasDecl(std.Build.Step.Compile, "getEmittedHotManifest")) {
+        @panic("Ghostty hot mode requires a hot-enabled Zig compiler");
+    }
+    return lib.getEmittedHotManifest();
 }
