@@ -126,6 +126,7 @@ final class ScriptTab: NSObject {
         }
 
         tabContainerWindow.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
         return nil
     }
 

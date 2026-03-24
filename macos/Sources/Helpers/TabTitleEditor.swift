@@ -26,12 +26,6 @@ protocol TabTitleEditorDelegate: AnyObject {
         _ editor: TabTitleEditor,
         performFallbackRenameFor targetWindow: NSWindow
     )
-
-    /// Called after inline editing finishes (whether committed or cancelled).
-    /// Use this to restore focus to the appropriate responder.
-    func tabTitleEditor(
-        _ editor: TabTitleEditor,
-        didFinishEditing targetWindow: NSWindow)
 }
 
 /// Handles inline tab title editing for native AppKit window tabs.
@@ -40,8 +34,6 @@ final class TabTitleEditor: NSObject, NSTextFieldDelegate {
     private weak var hostWindow: NSWindow?
     /// Delegate that provides and commits title data for target tab windows.
     private weak var delegate: TabTitleEditorDelegate?
-    /// Local event monitor so fullscreen titlebar-window clicks can also trigger rename.
-    private var eventMonitor: Any?
 
     /// Active inline editor view, if editing is in progress.
     private weak var inlineTitleEditor: NSTextField?
@@ -54,24 +46,8 @@ final class TabTitleEditor: NSObject, NSTextFieldDelegate {
 
     /// Creates a coordinator bound to a host window and rename delegate.
     init(hostWindow: NSWindow, delegate: TabTitleEditorDelegate) {
-        super.init()
-
         self.hostWindow = hostWindow
         self.delegate = delegate
-
-        // This is needed so that fullscreen clicks can register since they won't
-        // event on the NSWindow. We may want to tighten this up in the future by
-        // only doing this if we're fullscreen.
-        self.eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
-            guard let self else { return event }
-            return handleMouseDown(event) ? nil : event
-        }
-    }
-
-    deinit {
-        if let eventMonitor {
-            NSEvent.removeMonitor(eventMonitor)
-        }
     }
 
     /// Handles leftMouseDown events from the host window and begins inline edit if possible. If this
@@ -82,15 +58,8 @@ final class TabTitleEditor: NSObject, NSTextFieldDelegate {
         // If we don't have a host window to look up the click, we do nothing.
         guard let hostWindow else { return false }
 
-        // In native fullscreen, AppKit can route titlebar clicks through a detached
-        // NSToolbarFullScreenWindow. Only allow clicks from the host window or its
-        // fullscreen tab bar window so rename handling stays scoped to this tab strip.
-        let sourceWindow = event.window ?? hostWindow
-        guard sourceWindow === hostWindow || sourceWindow === hostWindow.tabBarView?.window
-        else { return false }
-
         // Find the tab window that is being clicked.
-        let locationInScreen = sourceWindow.convertPoint(toScreen: event.locationInWindow)
+        let locationInScreen = hostWindow.convertPoint(toScreen: event.locationInWindow)
         guard let tabIndex = hostWindow.tabIndex(atScreenPoint: locationInScreen),
               let targetWindow = hostWindow.tabbedWindows?[safe: tabIndex],
               delegate?.tabTitleEditor(self, canRenameTabFor: targetWindow) == true
@@ -196,11 +165,9 @@ final class TabTitleEditor: NSObject, NSTextFieldDelegate {
 
         // Focus after insertion so AppKit has created the field editor for this text field.
         DispatchQueue.main.async { [weak hostWindow, weak editor] in
-            guard let editor else { return }
-            let responderWindow = editor.window ?? hostWindow
-            guard let responderWindow else { return }
+            guard let hostWindow, let editor else { return }
             editor.isHidden = false
-            responderWindow.makeFirstResponder(editor)
+            hostWindow.makeFirstResponder(editor)
             if let fieldEditor = editor.currentEditor() as? NSTextView,
                let editorFont = editor.font {
                 fieldEditor.font = editorFont
@@ -231,11 +198,11 @@ final class TabTitleEditor: NSObject, NSTextFieldDelegate {
         inlineTitleTargetWindow = nil
 
         // Make sure the window grabs focus again
-        if let responderWindow = editor.window ?? hostWindow {
-            if let currentEditor = editor.currentEditor(), responderWindow.firstResponder === currentEditor {
-                responderWindow.makeFirstResponder(nil)
-            } else if responderWindow.firstResponder === editor {
-                responderWindow.makeFirstResponder(nil)
+        if let hostWindow {
+            if let currentEditor = editor.currentEditor(), hostWindow.firstResponder === currentEditor {
+                hostWindow.makeFirstResponder(nil)
+            } else if hostWindow.firstResponder === editor {
+                hostWindow.makeFirstResponder(nil)
             }
         }
 
@@ -245,14 +212,8 @@ final class TabTitleEditor: NSObject, NSTextFieldDelegate {
         previousTabState = nil
 
         // Delegate owns title persistence semantics (including empty-title handling).
-        guard let targetWindow else { return }
-
-        if commit {
-            delegate?.tabTitleEditor(self, didCommitTitle: editedTitle, for: targetWindow)
-        }
-
-        // Notify delegate that editing is done so it can restore focus.
-        delegate?.tabTitleEditor(self, didFinishEditing: targetWindow)
+        guard commit, let targetWindow else { return }
+        delegate?.tabTitleEditor(self, didCommitTitle: editedTitle, for: targetWindow)
     }
 
     /// Chooses an editor frame that aligns with the tab title within the tab button.

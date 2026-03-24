@@ -33,23 +33,11 @@ class TerminalViewContainer: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// The initial content size to use as a fallback before the SwiftUI
-    /// view hierarchy has completed layout (i.e. before @FocusedValue
-    /// propagates `lastFocusedSurface`). Once the hosting view reports
-    /// a valid intrinsic size, this fallback is no longer used.
-    var initialContentSize: NSSize?
-
+    /// To make ``TerminalController/DefaultSize/contentIntrinsicSize``
+    /// work in ``TerminalController/windowDidLoad()``,
+    /// we override this to provide the correct size.
     override var intrinsicContentSize: NSSize {
-        let hostingSize = terminalView.intrinsicContentSize
-        // The hosting view returns a valid size once SwiftUI has laid out
-        // with the correct idealWidth/idealHeight. Before that (when
-        // @FocusedValue hasn't propagated), it returns a tiny default.
-        // Fall back to initialContentSize in that case.
-        if let initialContentSize,
-           hostingSize.width < initialContentSize.width || hostingSize.height < initialContentSize.height {
-            return initialContentSize
-        }
-        return hostingSize
+        terminalView.intrinsicContentSize
     }
 
     private func setup() {

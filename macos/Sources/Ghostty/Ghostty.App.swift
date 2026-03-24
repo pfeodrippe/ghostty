@@ -269,9 +269,7 @@ extension Ghostty {
             _ userdata: UnsafeMutableRawPointer?,
             location: ghostty_clipboard_e,
             state: UnsafeMutableRawPointer?
-        ) -> Bool {
-            return false
-        }
+        ) {}
 
         static func confirmReadClipboard(
             _ userdata: UnsafeMutableRawPointer?,
@@ -318,28 +316,27 @@ extension Ghostty {
 
         static func closeSurface(_ userdata: UnsafeMutableRawPointer?, processAlive: Bool) {
             let surface = self.surfaceUserdata(from: userdata)
-            NotificationCenter.default.post(name: Notification.ghosttyCloseSurface, object: surface, userInfo: [
-                "process_alive": processAlive,
-            ])
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: Notification.ghosttyCloseSurface, object: surface, userInfo: [
+                    "process_alive": processAlive,
+                ])
+            }
         }
 
-        static func readClipboard(
-            _ userdata: UnsafeMutableRawPointer?,
-            location: ghostty_clipboard_e,
-            state: UnsafeMutableRawPointer?
-        ) -> Bool {
+        static func readClipboard(_ userdata: UnsafeMutableRawPointer?, location: ghostty_clipboard_e, state: UnsafeMutableRawPointer?) {
+            // If we don't even have a surface, something went terrible wrong so we have
+            // to leak "state".
             let surfaceView = self.surfaceUserdata(from: userdata)
-            guard let surface = surfaceView.surface else { return false }
+            guard let surface = surfaceView.surface else { return }
 
             // Get our pasteboard
-            guard let pasteboard = NSPasteboard.ghostty(location) else { return false }
+            guard let pasteboard = NSPasteboard.ghostty(location) else {
+                return completeClipboardRequest(surface, data: "", state: state)
+            }
 
-            // Return false if there is no text-like clipboard content so
-            // performable paste bindings can pass through to the terminal.
-            guard let str = pasteboard.getOpinionatedStringContents() else { return false }
-
+            // Get our string
+            let str = pasteboard.getOpinionatedStringContents() ?? ""
             completeClipboardRequest(surface, data: str, state: state)
-            return true
         }
 
         static func confirmReadClipboard(
@@ -538,9 +535,6 @@ extension Ghostty {
 
             case GHOSTTY_ACTION_SET_TITLE:
                 setTitle(app, target: target, v: action.action.set_title)
-
-            case GHOSTTY_ACTION_SET_TAB_TITLE:
-                return setTabTitle(app, target: target, v: action.action.set_tab_title)
 
             case GHOSTTY_ACTION_PROMPT_TITLE:
                 return promptTitle(app, target: target, v: action.action.prompt_title)
@@ -1605,33 +1599,6 @@ extension Ghostty {
             }
         }
 
-        private static func setTabTitle(
-            _ app: ghostty_app_t,
-            target: ghostty_target_s,
-            v: ghostty_action_set_title_s
-        ) -> Bool {
-            switch target.tag {
-            case GHOSTTY_TARGET_APP:
-                Ghostty.logger.warning("set tab title does nothing with an app target")
-                return false
-
-            case GHOSTTY_TARGET_SURFACE:
-                guard let title = String(cString: v.title!, encoding: .utf8) else { return false }
-                let titleOverride = title.isEmpty ? nil : title
-                guard let surface = target.target.surface else { return false }
-                guard let surfaceView = self.surfaceView(from: surface) else { return false }
-                guard let window = surfaceView.window,
-                      let controller = window.windowController as? BaseTerminalController
-                else { return false }
-                controller.titleOverride = titleOverride
-                return true
-
-            default:
-                assertionFailure()
-                return false
-            }
-        }
-
         private static func copyTitleToClipboard(
             _ app: ghostty_app_t,
             target: ghostty_target_s) -> Bool {
@@ -1969,15 +1936,6 @@ extension Ghostty {
             case GHOSTTY_TARGET_SURFACE:
                 guard let surface = target.target.surface else { return }
                 guard let surfaceView = self.surfaceView(from: surface) else { return }
-                guard let config = (NSApplication.shared.delegate as? AppDelegate)?.ghostty.config else { return }
-
-                guard config.progressStyle else {
-                    Ghostty.logger.debug("progress_report action blocked by config")
-                    DispatchQueue.main.async {
-                        surfaceView.progressReport = nil
-                    }
-                    return
-                }
 
                 let progressReport = Ghostty.Action.ProgressReport(c: v)
                 DispatchQueue.main.async {
