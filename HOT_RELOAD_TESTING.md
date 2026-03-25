@@ -9,6 +9,7 @@ This document records the exact workflow we have been using to validate the live
 - verify the embedded nREPL
 - perform path-aware `load-file`
 - enter `in-file` eval context when needed
+- use the repo-local hot nREPL helper for live requests
 - run a machine-verifiable live proof by temporarily rerouting `New Tab` to `newWindow(...)`
 
 ## Required tools
@@ -29,52 +30,17 @@ The commands below assume the usual sibling checkout layout:
 ```sh
 export GHOSTTY_REPO="${GHOSTTY_REPO:-$HOME/dev/ghostty-zig-worktree}"
 export HOT_ZIG_REPO="${HOT_ZIG_REPO:-$HOME/dev/zig-hot-llvm-0.15.2}"
-export HOT_ZIG_BIN="${HOT_ZIG_BIN:-$HOT_ZIG_REPO/stage3-debug-llvm20-stockboot/bin/zig}"
-export HOT_NREPL_SEND="${HOT_NREPL_SEND:-$HOT_ZIG_REPO/tools/hot_nrepl_send.zig}"
+export GHOSTTY_HOT_TOOL="${GHOSTTY_HOT_TOOL:-$GHOSTTY_REPO/tools/hot_nrepl.py}"
 export GHOSTTY_PORT_FILE="${GHOSTTY_PORT_FILE:-$GHOSTTY_REPO/.nrepl-port}"
 
-port() {
-  cat "$GHOSTTY_PORT_FILE"
-}
-
 hotreq() {
-  "$HOT_ZIG_BIN" run "$HOT_NREPL_SEND" -- --addr "127.0.0.1:$(port)" "$@"
+  "$GHOSTTY_HOT_TOOL" --port-file "$GHOSTTY_PORT_FILE" "$@"
 }
 ```
 
 ```sh
-enter_file() {
-  python3 - "$1" "$GHOSTTY_PORT_FILE" <<'PY'
-import socket
-import sys
-
-path = sys.argv[1]
-port = int(open(sys.argv[2]).read().strip())
-
-def bstr(value: bytes) -> bytes:
-    return str(len(value)).encode() + b":" + value
-
-request = b"d" + b"".join([
-    bstr(b"op"), bstr(b"in-file"),
-    bstr(b"session"), bstr(b"root"),
-    bstr(b"path"), bstr(path.encode()),
-]) + b"e"
-
-sock = socket.create_connection(("127.0.0.1", port), timeout=5)
-sock.sendall(request)
-sock.settimeout(0.5)
-response = bytearray()
-while True:
-    try:
-        chunk = sock.recv(65536)
-        if not chunk:
-            break
-        response.extend(chunk)
-    except socket.timeout:
-        break
-sock.close()
-print(response.decode("utf-8", "replace"))
-PY
+clone_session() {
+  hotreq --op clone | python3 -c 'import json,sys; print(json.load(sys.stdin)["new-session"])'
 }
 ```
 
@@ -152,6 +118,17 @@ hotreq --op describe
 hotreq --op current-generation
 ```
 
+You can also invoke the helper directly:
+
+```sh
+./tools/hot_nrepl.py --op describe
+./tools/hot_nrepl.py --op eval --code '1 + 2'
+./tools/hot_nrepl.py --op eval --code - <<'EOF'
+const x = 40;
+x + 2
+EOF
+```
+
 ## Path-aware `load-file`
 
 Reload an on-disk file directly:
@@ -174,16 +151,27 @@ Always use `--path REAL_FILE --file-path OVERLAY_FILE` for scoped replacements. 
 
 ## `in-file` eval
 
-`tools/hot_nrepl_send.zig` does not currently provide a convenience wrapper for `in-file`, so use the `enter_file` helper first and then plain `eval`.
+Use a cloned session when you want temporary file-context eval:
 
 Example:
 
 ```sh
-enter_file "$GHOSTTY_REPO/src/termio/stream_handler.zig"
-hotreq --op eval --code 'StreamHandler.tmux_enabled'
+session="$(clone_session)"
+hotreq --session "$session" --op in-file --path "$GHOSTTY_REPO/src/input/mouse.zig"
+hotreq --session "$session" --op eval --code 'Action.press == .press'
+hotreq --session "$session" --op close
 ```
 
 This is useful when you need file-context eval rather than the default root eval scope.
+
+## Generic extra request fields
+
+For operations that need fields beyond the built-in flags, use `--field` and `--int-field`.
+
+```sh
+hotreq --op symbol-info --field symbol=telemetry.bannerChecksum
+hotreq --op bind-generation --session s-2 --generation 4
+```
 
 ## Machine-verifiable live proof: `New Tab` becomes `New Window`
 
