@@ -11,6 +11,7 @@ hot_sample_repo_root() {
 HOT_SAMPLE_REPO_ROOT="${GHOSTTY_REPO:-$(hot_sample_repo_root)}"
 HOT_SAMPLE_HELPER="${GHOSTTY_HOT_TOOL:-$HOT_SAMPLE_REPO_ROOT/tools/hot_nrepl.py}"
 HOT_SAMPLE_PORT_FILE="${GHOSTTY_PORT_FILE:-$HOT_SAMPLE_REPO_ROOT/.nrepl-port}"
+HOT_SAMPLE_PROBE_FILE="${GHOSTTY_HOT_PROBE_FILE:-$HOT_SAMPLE_REPO_ROOT/src/input/mouse.zig}"
 
 hot_sample_hotreq() {
   "$HOT_SAMPLE_HELPER" --port-file "$HOT_SAMPLE_PORT_FILE" "$@"
@@ -50,6 +51,55 @@ hot_sample_eval_in_file() {
   printf '%s\n' "$response"
 }
 
+hot_sample_load_file() {
+  local path="$1"
+  local file_path="$2"
+  hot_sample_hotreq --op load-file --path "$path" --file-path "$file_path" >/dev/null
+}
+
+hot_sample_restore_file() {
+  local path="$1"
+  hot_sample_load_file "$path" "$path"
+}
+
 hot_sample_current_generation() {
   hot_sample_hotreq --op current-generation | hot_sample_json_get generation
+}
+
+hot_sample_probe_eval() {
+  local code="$1"
+  hot_sample_eval_in_file "$HOT_SAMPLE_PROBE_FILE" "$code"
+}
+
+hot_sample_probe_value() {
+  local code="$1"
+  hot_sample_probe_eval "$code" | hot_sample_json_get value
+}
+
+hot_sample_try_probe_value() {
+  local code="$1"
+  local response
+
+  if ! response="$(hot_sample_probe_eval "$code" 2>/dev/null)"; then
+    return 1
+  fi
+
+  printf '%s\n' "$response" | hot_sample_json_get value
+}
+
+hot_sample_decode_text_value() {
+  python3 -c 'import sys; raw=sys.stdin.read().strip();
+if raw.startswith("{") and raw.endswith("}"):
+    inner=raw[1:-1].strip();
+    if not inner:
+        print("");
+    else:
+        print(bytes(int(part.strip()) for part in inner.split(",")).decode("utf-8"));
+else:
+    print(raw)'
+}
+
+hot_sample_probe_text() {
+  local code="$1"
+  hot_sample_probe_value "$code" | hot_sample_decode_text_value
 }

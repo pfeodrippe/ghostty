@@ -139,6 +139,8 @@ The repo also carries a few known-good sample scripts under `tools/`:
 ./tools/hot_sample_math_ortho.sh
 ./tools/hot_sample_math_overlay_scale.sh
 ./tools/hot_sample_file_type_overlay_hot_ext.sh
+./tools/hot_sample_new_tab_new_window.sh
+./tools/hot_sample_output_dots_to_bangs.sh
 ```
 
 What they show:
@@ -159,15 +161,38 @@ What they show:
   - builds a temporary overlay for `src/math.zig`
   - changes the x-scale numerator in `ortho2d(...)`
   - reads the modified result back live
-  - reverts the file automatically
+  - acts as a toggle by adding live marker decls to the overlaid file only
 
 - `hot_sample_file_type_overlay_hot_ext.sh`
   - builds a temporary overlay for `src/file_type.zig`
   - teaches `guessFromExtension(...)` to map a custom extension
   - reads the modified result back live
-  - reverts the file automatically
+  - acts as a toggle by adding live marker decls to the overlaid file only
 
-The overlay scripts intentionally leave the on-disk source alone. They only patch the running app generation temporarily and then restore the real file.
+- `hot_sample_new_tab_new_window.sh`
+  - builds a temporary overlay for `src/Surface.zig`
+  - rewires `New Tab` to open a new window instead
+  - also prints a log line to the `hot-run` terminal when the action fires
+  - uses a build-safe companion marker overlay so `status`/`off` still work even though direct eval of `Surface.zig` pulls in build-only imports
+  - acts as a toggle and stays active until you rerun it or call it with `off`
+
+- `hot_sample_output_dots_to_bangs.sh`
+  - builds a temporary overlay for `src/termio/stream_handler.zig`
+  - changes terminal output so printed `.` characters appear as `!`
+  - gives you a simple command to run in Ghostty to verify the UI change
+  - acts as a toggle and stays active until you rerun it or call it with `off`
+
+The overlay scripts intentionally leave the on-disk source alone. They patch the running app generation, and each overlay uses live `pub` marker decls created through hot reload so the script can detect whether that one sample is active. Most samples put the marker directly on the overlaid file; the `Surface` sample uses a build-safe companion overlay for the marker because direct eval of `Surface.zig` itself is not nREPL-friendly. There is no hidden disk state and no tracked source module for toggles. Restarting the app returns all samples to a clean, off state automatically.
+
+Overlay scripts accept `toggle` (default), `on`, `off`, and `status`.
+
+Examples:
+
+```sh
+./tools/hot_sample_output_dots_to_bangs.sh
+./tools/hot_sample_output_dots_to_bangs.sh status
+./tools/hot_sample_output_dots_to_bangs.sh off
+```
 
 ## Path-aware `load-file`
 
