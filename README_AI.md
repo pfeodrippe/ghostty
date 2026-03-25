@@ -727,7 +727,8 @@ Relevant files include:
 
 - `Makefile`
 - `HOT_RELOAD_TESTING.md`
-- `tools/hot_nrepl.py`
+- `tools/hot_nrepl`
+- `tools/hot_nrepl_client/`
 - `.zig-hot/`
 - `.nrepl-port`
 

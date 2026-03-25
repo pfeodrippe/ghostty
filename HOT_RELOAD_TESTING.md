@@ -30,13 +30,16 @@ The commands below assume the usual sibling checkout layout:
 ```sh
 export GHOSTTY_REPO="${GHOSTTY_REPO:-$HOME/dev/ghostty-zig-worktree}"
 export HOT_ZIG_REPO="${HOT_ZIG_REPO:-$HOME/dev/zig-hot-llvm-0.15.2}"
-export GHOSTTY_HOT_TOOL="${GHOSTTY_HOT_TOOL:-$GHOSTTY_REPO/tools/hot_nrepl.py}"
+export GHOSTTY_HOT_TOOL="${GHOSTTY_HOT_TOOL:-$GHOSTTY_REPO/tools/hot_nrepl}"
 export GHOSTTY_PORT_FILE="${GHOSTTY_PORT_FILE:-$GHOSTTY_REPO/.nrepl-port}"
 
 hotreq() {
   "$GHOSTTY_HOT_TOOL" --port-file "$GHOSTTY_PORT_FILE" "$@"
 }
 ```
+
+`./tools/hot_nrepl` is a thin launcher that builds the standalone Zig client in
+`tools/hot_nrepl_client/` on demand and then reuses the built binary.
 
 ```sh
 clone_session() {
@@ -121,9 +124,9 @@ hotreq --op current-generation
 You can also invoke the helper directly:
 
 ```sh
-./tools/hot_nrepl.py --op describe
-./tools/hot_nrepl.py --op eval --code '1 + 2'
-./tools/hot_nrepl.py --op eval --code - <<'EOF'
+./tools/hot_nrepl --op describe
+./tools/hot_nrepl --op eval --code '1 + 2'
+./tools/hot_nrepl --op eval --code - <<'EOF'
 const x = 40;
 x + 2
 EOF

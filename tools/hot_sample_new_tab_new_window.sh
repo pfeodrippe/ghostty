@@ -24,55 +24,8 @@ overlay="$tmpdir/surface_new_tab_new_window.zig"
 marker_overlay="$tmpdir/mouse_new_tab_marker.zig"
 trap 'rm -rf "$tmpdir"' EXIT
 
-active="false"
-if active_value="$(hot_sample_try_probe_value "$active_expr")"; then
-  active="$active_value"
-fi
-
-if [[ "$mode" == "toggle" ]]; then
-  if [[ "$active" == "true" ]]; then
-    mode="off"
-  else
-    mode="on"
-  fi
-fi
-
-if [[ "$mode" == "status" ]]; then
-  if [[ "$active" == "true" ]]; then
-    printf 'ACTIVE %s behavior=new-tab-opens-new-window generation=%s\n' \
-      "$target" \
-      "$(hot_sample_current_generation)"
-  else
-    printf 'INACTIVE %s\n' "$target"
-  fi
-  exit 0
-fi
-
-if [[ "$mode" == "off" ]]; then
-  if [[ "$active" != "true" ]]; then
-    printf 'Already inactive %s\n' "$target"
-    exit 0
-  fi
-
-  base_generation="$(hot_sample_current_generation)"
-  hot_sample_restore_file "$target"
-  hot_sample_restore_file "$marker_target"
-  revert_generation="$(hot_sample_current_generation)"
-  printf 'Deactivated New Tab overlay on %s (generation %s -> %s).\n' \
-    "$target" \
-    "$base_generation" \
-    "$revert_generation"
-  exit 0
-fi
-
-if [[ "$active" == "true" ]]; then
-  printf 'Already active %s behavior=new-tab-opens-new-window generation=%s\n' \
-    "$target" \
-    "$(hot_sample_current_generation)"
-  exit 0
-fi
-
-python3 - "$HOT_SAMPLE_REPO_ROOT/$target" "$overlay" <<'PY'
+if [[ "$mode" != "status" && "$mode" != "off" ]]; then
+  python3 - "$HOT_SAMPLE_REPO_ROOT/$target" "$overlay" <<'PY'
 from pathlib import Path
 import sys
 
@@ -96,7 +49,7 @@ if count != 1:
 overlay.write_text(src.replace(needle, replacement, 1))
 PY
 
-python3 - "$HOT_SAMPLE_REPO_ROOT/$marker_target" "$marker_overlay" <<'PY'
+  python3 - "$HOT_SAMPLE_REPO_ROOT/$marker_target" "$marker_overlay" <<'PY'
 from pathlib import Path
 import sys
 
@@ -110,19 +63,53 @@ pub fn __hot_sample_new_tab_overlay_active() bool {
 '''
 overlay.write_text(src.rstrip() + marker)
 PY
-
-base_generation="$(hot_sample_current_generation)"
-hot_sample_load_file "$target" "$overlay"
-if ! hot_sample_load_file "$marker_target" "$marker_overlay"; then
-  hot_sample_restore_file "$target"
-  exit 1
 fi
-overlay_generation="$(hot_sample_current_generation)"
+
+toggle_response="$(hot_sample_toggle_request "$mode" "$active_expr" \
+  --toggle-load "$target=$overlay" \
+  --toggle-restore "$target=$target" \
+  --toggle-load "$marker_target=$marker_overlay" \
+  --toggle-restore "$marker_target=$marker_target")"
+action="$(printf '%s\n' "$toggle_response" | hot_sample_json_get action)"
+active="$(printf '%s\n' "$toggle_response" | hot_sample_json_get active)"
+
+if [[ "$mode" == "status" ]]; then
+  if [[ "$active" == "true" ]]; then
+    printf 'ACTIVE %s behavior=new-tab-opens-new-window generation=%s\n' \
+      "$target" \
+      "$(hot_sample_current_generation)"
+  else
+    printf 'INACTIVE %s\n' "$target"
+  fi
+  exit 0
+fi
+
+if [[ "$action" == "none" ]]; then
+  if [[ "$active" == "true" ]]; then
+    printf 'Already active %s behavior=new-tab-opens-new-window generation=%s\n' \
+      "$target" \
+      "$(hot_sample_current_generation)"
+  else
+    printf 'Already inactive %s\n' "$target"
+  fi
+  exit 0
+fi
+
+generation_before="$(printf '%s\n' "$toggle_response" | hot_sample_json_get generation-before)"
+generation_after="$(printf '%s\n' "$toggle_response" | hot_sample_json_get generation-after)"
+
+if [[ "$action" == "off" ]]; then
+  printf 'Deactivated New Tab overlay on %s (generation %s -> %s).\n' \
+    "$target" \
+    "$generation_before" \
+    "$generation_after"
+  exit 0
+fi
 
 printf 'Activated New Tab overlay on %s (generation %s -> %s).\n' \
   "$target" \
-  "$base_generation" \
-  "$overlay_generation"
+  "$generation_before" \
+  "$generation_after"
 printf '%s\n' \
   'Now trigger New Tab once in the Ghostty UI.' \
   'Expected result:' \

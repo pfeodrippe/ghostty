@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "$script_dir/.." && pwd)"
+project_dir="$repo_root/tools/hot_nrepl_client"
+binary="$project_dir/zig-out/bin/hot_nrepl"
+
+find_zig() {
+  if [[ -n "${GHOSTTY_HOT_TOOL_ZIG:-}" ]]; then
+    printf '%s\n' "$GHOSTTY_HOT_TOOL_ZIG"
+    return 0
+  fi
+  if command -v zig >/dev/null 2>&1; then
+    command -v zig
+    return 0
+  fi
+  if [[ -x "$repo_root/../zig-stock-0.15.2/stage3-debug/bin/zig" ]]; then
+    printf '%s\n' "$repo_root/../zig-stock-0.15.2/stage3-debug/bin/zig"
+    return 0
+  fi
+  if [[ -x "$repo_root/../zig-hot-llvm-0.15.2/stage3-debug-llvm20-stockboot/bin/zig" ]]; then
+    printf '%s\n' "$repo_root/../zig-hot-llvm-0.15.2/stage3-debug-llvm20-stockboot/bin/zig"
+    return 0
+  fi
+  printf '%s\n' "unable to find a Zig compiler; set GHOSTTY_HOT_TOOL_ZIG" >&2
+  return 1
+}
+
+needs_build=0
+if [[ ! -x "$binary" ]]; then
+  needs_build=1
+elif find "$project_dir/build.zig" "$project_dir/build.zig.zon" "$project_dir/src" -type f -newer "$binary" -print -quit | grep -q .; then
+  needs_build=1
+fi
+
+if [[ "$needs_build" == 1 ]]; then
+  zig_bin="$(find_zig)"
+  (
+    cd "$project_dir"
+    "$zig_bin" build -Doptimize=ReleaseSafe
+  )
+fi
+
+exec "$binary" "$@"

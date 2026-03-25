@@ -32,63 +32,8 @@ tmpdir="$(mktemp -d)"
 overlay="$tmpdir/file_type_overlay.zig"
 trap 'rm -rf "$tmpdir"' EXIT
 
-active="false"
-if active_value="$(hot_sample_try_probe_value "$active_expr")"; then
-  active="$active_value"
-fi
-
-if [[ "$mode" == "toggle" ]]; then
-  if [[ "$active" == "true" ]]; then
-    mode="off"
-  else
-    mode="on"
-  fi
-fi
-
-if [[ "$mode" == "status" ]]; then
-  if [[ "$active" == "true" ]]; then
-    extension="$(hot_sample_probe_text "$extension_expr")"
-    mapped_tag="$(hot_sample_probe_text "$mapped_tag_expr")"
-    code="$(python3 -c 'import json,sys; ext=sys.argv[1]; tag=sys.argv[2]; print(f"FileType.guessFromExtension({json.dumps(ext)}) == .{tag}")' "$extension" "$mapped_tag")"
-    value="$(hot_sample_eval_in_file "$target" "$code" | hot_sample_json_get value)"
-    printf 'ACTIVE %s extension=%s mapped_tag=%s value=%s generation=%s\n' \
-      "$target" \
-      "$extension" \
-      "$mapped_tag" \
-      "$value" \
-      "$(hot_sample_current_generation)"
-  else
-    printf 'INACTIVE %s\n' "$target"
-  fi
-  exit 0
-fi
-
-if [[ "$mode" == "off" ]]; then
-  if [[ "$active" != "true" ]]; then
-    printf 'Already inactive %s\n' "$target"
-    exit 0
-  fi
-
-  base_generation="$(hot_sample_current_generation)"
-  hot_sample_restore_file "$target"
-  revert_generation="$(hot_sample_current_generation)"
-  printf 'Deactivated file_type overlay on %s (generation %s -> %s).\n' \
-    "$target" \
-    "$base_generation" \
-    "$revert_generation"
-  exit 0
-fi
-
-if [[ "$active" == "true" ]]; then
-  printf 'Already active %s extension=%s mapped_tag=%s generation=%s\n' \
-    "$target" \
-    "$(hot_sample_probe_text "$extension_expr")" \
-    "$(hot_sample_probe_text "$mapped_tag_expr")" \
-    "$(hot_sample_current_generation)"
-  exit 0
-fi
-
-python3 - "$HOT_SAMPLE_REPO_ROOT/$target" "$overlay" "$extension" "$mapped_tag" <<'PY'
+if [[ "$mode" != "status" && "$mode" != "off" ]]; then
+  python3 - "$HOT_SAMPLE_REPO_ROOT/$target" "$overlay" "$extension" "$mapped_tag" <<'PY'
 from pathlib import Path
 import json
 import sys
@@ -121,10 +66,55 @@ pub fn __hot_sample_file_type_overlay_mapped_tag() []const u8 {{
 '''
 overlay.write_text(src.replace(needle, replacement, 1).rstrip() + marker)
 PY
+fi
 
-base_generation="$(hot_sample_current_generation)"
-hot_sample_load_file "$target" "$overlay"
-overlay_generation="$(hot_sample_current_generation)"
+toggle_response="$(hot_sample_toggle_request "$mode" "$active_expr" \
+  --toggle-load "$target=$overlay" \
+  --toggle-restore "$target=$target")"
+action="$(printf '%s\n' "$toggle_response" | hot_sample_json_get action)"
+active="$(printf '%s\n' "$toggle_response" | hot_sample_json_get active)"
+
+if [[ "$mode" == "status" ]]; then
+  if [[ "$active" == "true" ]]; then
+    extension="$(hot_sample_probe_text "$extension_expr")"
+    mapped_tag="$(hot_sample_probe_text "$mapped_tag_expr")"
+    code="$(python3 -c 'import json,sys; ext=sys.argv[1]; tag=sys.argv[2]; print(f"FileType.guessFromExtension({json.dumps(ext)}) == .{tag}")' "$extension" "$mapped_tag")"
+    value="$(hot_sample_eval_in_file "$target" "$code" | hot_sample_json_get value)"
+    printf 'ACTIVE %s extension=%s mapped_tag=%s value=%s generation=%s\n' \
+      "$target" \
+      "$extension" \
+      "$mapped_tag" \
+      "$value" \
+      "$(hot_sample_current_generation)"
+  else
+    printf 'INACTIVE %s\n' "$target"
+  fi
+  exit 0
+fi
+
+if [[ "$action" == "none" ]]; then
+  if [[ "$active" == "true" ]]; then
+    printf 'Already active %s extension=%s mapped_tag=%s generation=%s\n' \
+      "$target" \
+      "$(hot_sample_probe_text "$extension_expr")" \
+      "$(hot_sample_probe_text "$mapped_tag_expr")" \
+      "$(hot_sample_current_generation)"
+  else
+    printf 'Already inactive %s\n' "$target"
+  fi
+  exit 0
+fi
+
+generation_before="$(printf '%s\n' "$toggle_response" | hot_sample_json_get generation-before)"
+generation_after="$(printf '%s\n' "$toggle_response" | hot_sample_json_get generation-after)"
+
+if [[ "$action" == "off" ]]; then
+  printf 'Deactivated file_type overlay on %s (generation %s -> %s).\n' \
+    "$target" \
+    "$generation_before" \
+    "$generation_after"
+  exit 0
+fi
 
 code="$(python3 -c 'import json,sys; ext=sys.argv[1]; tag=sys.argv[2]; print(f"FileType.guessFromExtension({json.dumps(ext)}) == .{tag}")' "$extension" "$mapped_tag")"
 value="$(hot_sample_eval_in_file "$target" "$code" | hot_sample_json_get value)"
@@ -134,8 +124,8 @@ printf 'Activated file_type overlay on %s: mapped %s to .%s -> %s (generation %s
   "$extension" \
   "$mapped_tag" \
   "$value" \
-  "$base_generation" \
-  "$overlay_generation"
+  "$generation_before" \
+  "$generation_after"
 printf 'Run `%s status` to inspect or `%s off` to restore the real file.\n' \
   "$(basename "$0")" \
   "$(basename "$0")"

@@ -9,12 +9,24 @@ hot_sample_repo_root() {
 }
 
 HOT_SAMPLE_REPO_ROOT="${GHOSTTY_REPO:-$(hot_sample_repo_root)}"
-HOT_SAMPLE_HELPER="${GHOSTTY_HOT_TOOL:-$HOT_SAMPLE_REPO_ROOT/tools/hot_nrepl.py}"
+HOT_SAMPLE_HELPER="${GHOSTTY_HOT_TOOL:-$HOT_SAMPLE_REPO_ROOT/tools/hot_nrepl}"
 HOT_SAMPLE_PORT_FILE="${GHOSTTY_PORT_FILE:-$HOT_SAMPLE_REPO_ROOT/.nrepl-port}"
 HOT_SAMPLE_PROBE_FILE="${GHOSTTY_HOT_PROBE_FILE:-$HOT_SAMPLE_REPO_ROOT/src/input/mouse.zig}"
 
 hot_sample_hotreq() {
   "$HOT_SAMPLE_HELPER" --port-file "$HOT_SAMPLE_PORT_FILE" "$@"
+}
+
+hot_sample_toggle_request() {
+  local mode="$1"
+  local active_code="$2"
+  shift 2
+
+  hot_sample_hotreq \
+    --toggle "$mode" \
+    --toggle-probe-path "$HOT_SAMPLE_PROBE_FILE" \
+    --toggle-active-code "$active_code" \
+    "$@"
 }
 
 hot_sample_json_get() {
