@@ -106,6 +106,20 @@ pub export fn ghostty_init(argc: usize, argv: [*][*:0]u8) c_int {
     assert(builtin.link_libc);
 
     std.os.argv = argv[0..argc];
+    std.hot.bootstrapAtStart();
+    const hot_info = std.hot.info();
+    if (hot_info.status != .ready) {
+        std.log.warn(
+            "hot runtime status={} reason={?s} manifest={?s} artifact={?s} listen={?s}",
+            .{
+                hot_info.status,
+                hot_info.reason,
+                hot_info.manifest_path,
+                hot_info.artifact_path,
+                hot_info.listen_address,
+            },
+        );
+    }
     state.init() catch |err| {
         std.log.err("failed to initialize ghostty error={}", .{err});
         return 1;
