@@ -129,6 +129,46 @@ x + 2
 EOF
 ```
 
+## Sample hot scripts
+
+The repo also carries a few known-good sample scripts under `tools/`:
+
+```sh
+./tools/hot_sample_mouse_button_max.sh
+./tools/hot_sample_file_type_guess.sh
+./tools/hot_sample_math_ortho.sh
+./tools/hot_sample_math_overlay_scale.sh
+./tools/hot_sample_file_type_overlay_hot_ext.sh
+```
+
+What they show:
+
+- `hot_sample_mouse_button_max.sh`
+  - evaluates `src/input/mouse.zig`
+  - prints `Button.max`, optionally plus a small shell-provided offset
+
+- `hot_sample_file_type_guess.sh`
+  - evaluates `src/file_type.zig`
+  - checks whether `guessFromExtension(...)` matches the expected enum tag
+
+- `hot_sample_math_ortho.sh`
+  - evaluates `src/math.zig`
+  - prints the x-scale entry from `ortho2d(...)`
+
+- `hot_sample_math_overlay_scale.sh`
+  - builds a temporary overlay for `src/math.zig`
+  - changes the x-scale numerator in `ortho2d(...)`
+  - reads the modified result back live
+  - reverts the file automatically
+
+- `hot_sample_file_type_overlay_hot_ext.sh`
+  - builds a temporary overlay for `src/file_type.zig`
+  - teaches `guessFromExtension(...)` to map a custom extension
+  - reads the modified result back live
+  - reverts the file automatically
+
+The overlay scripts intentionally leave the on-disk source alone. They only patch the running app generation temporarily and then restore the real file.
+
 ## Path-aware `load-file`
 
 Reload an on-disk file directly:
