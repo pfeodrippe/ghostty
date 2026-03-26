@@ -180,7 +180,7 @@ What they show:
   - acts as a toggle and stays active until you rerun it or call it with `off`
 
 - `hot_sample_output_dots_to_bangs.sh`
-  - builds a temporary overlay for `src/termio/stream_handler.zig`
+  - builds a temporary overlay for `src/terminal/stream.zig`
   - changes terminal output so printed `.` characters appear as `!`
   - gives you a simple command to run in Ghostty to verify the UI change
   - acts as a toggle and stays active until you rerun it or call it with `off`

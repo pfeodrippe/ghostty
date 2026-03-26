@@ -11,10 +11,11 @@ hot_sample_repo_root() {
 HOT_SAMPLE_REPO_ROOT="${GHOSTTY_REPO:-$(hot_sample_repo_root)}"
 HOT_SAMPLE_HELPER="${GHOSTTY_HOT_TOOL:-$HOT_SAMPLE_REPO_ROOT/tools/hot_nrepl}"
 HOT_SAMPLE_PORT_FILE="${GHOSTTY_PORT_FILE:-$HOT_SAMPLE_REPO_ROOT/.nrepl-port}"
+HOT_SAMPLE_TIMEOUT="${GHOSTTY_HOT_TIMEOUT:-120}"
 HOT_SAMPLE_PROBE_FILE="${GHOSTTY_HOT_PROBE_FILE:-$HOT_SAMPLE_REPO_ROOT/src/input/mouse.zig}"
 
 hot_sample_hotreq() {
-  "$HOT_SAMPLE_HELPER" --port-file "$HOT_SAMPLE_PORT_FILE" "$@"
+  "$HOT_SAMPLE_HELPER" --timeout "$HOT_SAMPLE_TIMEOUT" --port-file "$HOT_SAMPLE_PORT_FILE" "$@"
 }
 
 hot_sample_toggle_request() {

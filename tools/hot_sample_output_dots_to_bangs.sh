@@ -5,8 +5,9 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/hot_sample_lib.sh"
 
-target="src/termio/stream_handler.zig"
-active_expr='stream_handler.__hot_sample_output_overlay_active()'
+target="src/terminal/stream.zig"
+active_expr='__hot_sample_output_overlay_active()'
+HOT_SAMPLE_PROBE_FILE="$HOT_SAMPLE_REPO_ROOT/$target"
 
 mode="toggle"
 if [[ $# -gt 0 ]]; then
@@ -19,7 +20,7 @@ if [[ $# -gt 0 ]]; then
 fi
 
 tmpdir="$(mktemp -d)"
-overlay="$tmpdir/stream_handler_dots_to_bangs.zig"
+overlay="$tmpdir/termio_output_dots_to_bangs.zig"
 trap 'rm -rf "$tmpdir"' EXIT
 
 if [[ "$mode" != "status" && "$mode" != "off" ]]; then
@@ -29,20 +30,18 @@ import sys
 
 src = Path(sys.argv[1]).read_text()
 overlay = Path(sys.argv[2])
-needle = '''            .print => {
-                @branchHint(.likely);
-                try self.terminal.print(value.cp);
-            },
+needle = '''        inline fn print(self: *Self, c: u21) void {
+            self.handler.vt(.print, .{ .cp = c });
+        }
 '''
-replacement = '''            .print => {
-                @branchHint(.likely);
-                const cp = if (value.cp == '.') '!' else value.cp;
-                try self.terminal.print(cp);
-            },
+replacement = '''        inline fn print(self: *Self, c: u21) void {
+            const cp = if (c == '.') '!' else c;
+            self.handler.vt(.print, .{ .cp = cp });
+        }
 '''
 count = src.count(needle)
 if count != 1:
-    raise SystemExit(f"expected 1 .print branch, found {count}")
+    raise SystemExit(f"expected 1 print function, found {count}")
 marker = '''
 
 pub fn __hot_sample_output_overlay_active() bool {
