@@ -5,9 +5,9 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/hot_sample_lib.sh"
 
-target="src/terminal/stream.zig"
-active_expr='__hot_sample_output_overlay_active()'
-HOT_SAMPLE_PROBE_FILE="$HOT_SAMPLE_REPO_ROOT/$target"
+target="src/termio/stream_handler.zig"
+marker_target="src/input/mouse.zig"
+active_expr='mouse.__hot_sample_output_overlay_active()'
 
 mode="toggle"
 if [[ $# -gt 0 ]]; then
@@ -21,6 +21,7 @@ fi
 
 tmpdir="$(mktemp -d)"
 overlay="$tmpdir/termio_output_dots_to_bangs.zig"
+marker_overlay="$tmpdir/output_marker.zig"
 trap 'rm -rf "$tmpdir"' EXIT
 
 if [[ "$mode" != "status" && "$mode" != "off" ]]; then
@@ -30,31 +31,44 @@ import sys
 
 src = Path(sys.argv[1]).read_text()
 overlay = Path(sys.argv[2])
-needle = '''        inline fn print(self: *Self, c: u21) void {
-            self.handler.vt(.print, .{ .cp = c });
-        }
+needle = '''            .print => {
+                @branchHint(.likely);
+                try self.terminal.print(value.cp);
+            },
 '''
-replacement = '''        inline fn print(self: *Self, c: u21) void {
-            const cp = if (c == '.') '!' else c;
-            self.handler.vt(.print, .{ .cp = cp });
-        }
+replacement = '''            .print => {
+                @branchHint(.likely);
+                const cp: u21 = if (value.cp == 46) 33 else value.cp;
+                try self.terminal.print(cp);
+            },
 '''
 count = src.count(needle)
 if count != 1:
-    raise SystemExit(f"expected 1 print function, found {count}")
+    raise SystemExit(f"expected 1 print branch, found {count}")
+overlay.write_text(src.replace(needle, replacement, 1))
+PY
+
+  python3 - "$HOT_SAMPLE_REPO_ROOT/$marker_target" "$marker_overlay" <<'PY'
+from pathlib import Path
+import sys
+
+src = Path(sys.argv[1]).read_text()
+overlay = Path(sys.argv[2])
 marker = '''
 
 pub fn __hot_sample_output_overlay_active() bool {
     return true;
 }
 '''
-overlay.write_text(src.replace(needle, replacement, 1).rstrip() + marker)
+overlay.write_text(src.rstrip() + marker)
 PY
 fi
 
 toggle_response="$(hot_sample_toggle_request "$mode" "$active_expr" \
   --toggle-load "$target=$overlay" \
-  --toggle-restore "$target=$target")"
+  --toggle-restore "$target=$target" \
+  --toggle-load "$marker_target=$marker_overlay" \
+  --toggle-restore "$marker_target=$marker_target")"
 action="$(printf '%s\n' "$toggle_response" | hot_sample_json_get action)"
 active="$(printf '%s\n' "$toggle_response" | hot_sample_json_get active)"
 

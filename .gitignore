@@ -9,6 +9,8 @@
 .flatpak-builder/
 zig-cache/
 .zig-cache/
+.zig-cache-*/
+.zig-global-cache-*/
 zig-out/
 build-cmake/
 CMakeCache.txt
@@ -21,6 +23,14 @@ test/ghostty
 test/cases/**/*.actual.png
 flatpak/builddir/
 flatpak/repo/
+
+.zig-hot/
+.nrepl-port
+/*.hot.json
+/*.hot.zig
+/libpty_*.a
+/root.o
+/tmp_*.o
 
 glad.zip
 /Box_test.ppm
