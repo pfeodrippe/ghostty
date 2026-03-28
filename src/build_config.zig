@@ -90,10 +90,10 @@ pub const Artifact = enum {
         return switch (builtin.output_mode) {
             .Exe => .exe,
             .Lib => .lib,
-            else => {
-                @compileLog(builtin.output_mode);
-                @compileError("unsupported artifact output mode");
-            },
+            // Hot publication on macOS compiles the publication root as an object
+            // before the host linker turns it into a dylib. That path should follow
+            // the non-executable artifact behavior instead of hard-failing here.
+            .Obj => .lib,
         };
     }
 };

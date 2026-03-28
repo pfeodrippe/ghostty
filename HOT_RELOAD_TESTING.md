@@ -238,7 +238,7 @@ For operations that need fields beyond the built-in flags, use `--field` and `--
 
 ```sh
 hotreq --op symbol-info --field symbol=telemetry.bannerChecksum
-hotreq --op bind-generation --session s-2 --generation 4
+hotreq --op load-file --path src/input/mouse.zig --file-path /tmp/mouse_overlay.zig
 ```
 
 ## Machine-verifiable live proof: `New Tab` becomes `New Window`

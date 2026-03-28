@@ -11,11 +11,16 @@ hot_sample_repo_root() {
 HOT_SAMPLE_REPO_ROOT="${GHOSTTY_REPO:-$(hot_sample_repo_root)}"
 HOT_SAMPLE_HELPER="${GHOSTTY_HOT_TOOL:-$HOT_SAMPLE_REPO_ROOT/tools/hot_nrepl}"
 HOT_SAMPLE_PORT_FILE="${GHOSTTY_PORT_FILE:-$HOT_SAMPLE_REPO_ROOT/.nrepl-port}"
+HOT_SAMPLE_ADDR="${GHOSTTY_HOT_ADDR:-}"
 HOT_SAMPLE_TIMEOUT="${GHOSTTY_HOT_TIMEOUT:-120}"
 HOT_SAMPLE_PROBE_FILE="${GHOSTTY_HOT_PROBE_FILE:-$HOT_SAMPLE_REPO_ROOT/src/input/mouse.zig}"
 
 hot_sample_hotreq() {
-  "$HOT_SAMPLE_HELPER" --timeout "$HOT_SAMPLE_TIMEOUT" --port-file "$HOT_SAMPLE_PORT_FILE" "$@"
+  if [[ -n "$HOT_SAMPLE_ADDR" ]]; then
+    "$HOT_SAMPLE_HELPER" --timeout "$HOT_SAMPLE_TIMEOUT" --addr "$HOT_SAMPLE_ADDR" "$@"
+  else
+    "$HOT_SAMPLE_HELPER" --timeout "$HOT_SAMPLE_TIMEOUT" --port-file "$HOT_SAMPLE_PORT_FILE" "$@"
+  fi
 }
 
 hot_sample_toggle_request() {
@@ -80,11 +85,6 @@ hot_sample_overlay_file_match() {
   local path="$1"
   local file_path="$2"
   hot_sample_hotreq --op overlay-file-match --path "$path" --file-path "$file_path"
-}
-
-hot_sample_activate_generation() {
-  local generation="$1"
-  hot_sample_hotreq --op activate-generation --generation "$generation"
 }
 
 hot_sample_restore_file() {

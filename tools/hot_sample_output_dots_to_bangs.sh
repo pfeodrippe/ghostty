@@ -6,40 +6,6 @@ script_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/hot_sample_lib.sh"
 
 target="src/font/shaper/run.zig"
-state_file="${TMPDIR:-/tmp}/ghostty-hot-sample-output-dots-to-bangs.state"
-
-load_generation_state() {
-  cached_base_generation=""
-  cached_overlay_generation=""
-  [[ -f "$state_file" ]] || return 0
-
-  while IFS='=' read -r key value; do
-    case "$key" in
-      target)
-        if [[ "$value" != "$target" ]]; then
-          cached_base_generation=""
-          cached_overlay_generation=""
-          return 0
-        fi
-        ;;
-      base_generation) cached_base_generation="$value" ;;
-      overlay_generation) cached_overlay_generation="$value" ;;
-    esac
-  done <"$state_file"
-}
-
-write_generation_state() {
-  local base_generation="$1"
-  local overlay_generation="$2"
-  local tmp_state
-
-  tmp_state="$(mktemp "${state_file}.XXXXXX")"
-  printf 'target=%s\nbase_generation=%s\noverlay_generation=%s\n' \
-    "$target" \
-    "$base_generation" \
-    "$overlay_generation" >"$tmp_state"
-  mv "$tmp_state" "$state_file"
-}
 
 mode="toggle"
 if [[ $# -gt 0 ]]; then
@@ -110,7 +76,6 @@ if [[ "$mode" == "status" ]]; then
 fi
 
 generation_before="$(hot_sample_current_generation)"
-load_generation_state
 
 if [[ "$effective_mode" == "on" && "$active" == "true" ]]; then
   printf 'Already active %s replacement=.->! generation=%s\n' \
@@ -125,20 +90,8 @@ if [[ "$effective_mode" == "off" && "$active" != "true" ]]; then
 fi
 
 if [[ "$effective_mode" == "off" ]]; then
-  if [[ -n "${cached_base_generation:-}" && -n "${cached_overlay_generation:-}" && "$generation_before" == "$cached_overlay_generation" ]]; then
-    if hot_sample_activate_generation "$cached_base_generation" >/dev/null 2>&1; then
-      generation_after="$(hot_sample_current_generation_retry)"
-      printf 'Deactivated output overlay on %s (generation %s -> %s).\n' \
-        "$target" \
-        "$generation_before" \
-        "$generation_after"
-      exit 0
-    fi
-  fi
-
   hot_sample_restore_file "$target"
   generation_after="$(hot_sample_current_generation_retry)"
-  write_generation_state "$generation_after" "$generation_before"
   printf 'Deactivated output overlay on %s (generation %s -> %s).\n' \
     "$target" \
     "$generation_before" \
@@ -146,30 +99,8 @@ if [[ "$effective_mode" == "off" ]]; then
   exit 0
 fi
 
-if [[ -n "${cached_base_generation:-}" && -n "${cached_overlay_generation:-}" && "$generation_before" == "$cached_base_generation" ]]; then
-  if hot_sample_activate_generation "$cached_overlay_generation" >/dev/null 2>&1; then
-    generation_after="$(hot_sample_current_generation_retry)"
-    printf 'Activated output overlay on %s (generation %s -> %s).\n' \
-      "$target" \
-      "$generation_before" \
-      "$generation_after"
-    printf '%s\n' \
-      'Now run a command in Ghostty that prints periods, for example:' \
-      "  printf 'a.b.c\\n'" \
-      "  echo 'version 1.2.3'" \
-      '' \
-      'Expected result while the overlay is active:' \
-      '  - every printed "." shows up as "!" in the Ghostty terminal UI' \
-      '  - for example, a.b.c becomes a!b!c' \
-      '' \
-      'Run this script again, or use `off`, to restore the real file.'
-    exit 0
-  fi
-fi
-
 hot_sample_load_file "$target" "$overlay"
 generation_after="$(hot_sample_current_generation_retry)"
-write_generation_state "$generation_before" "$generation_after"
 
 printf 'Activated output overlay on %s (generation %s -> %s).\n' \
   "$target" \
