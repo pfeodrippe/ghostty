@@ -67,7 +67,24 @@ hot_sample_eval_in_file() {
 hot_sample_load_file() {
   local path="$1"
   local file_path="$2"
-  hot_sample_hotreq --op load-file --path "$path" --file-path "$file_path" >/dev/null
+  hot_sample_load_file_response "$path" "$file_path" >/dev/null
+}
+
+hot_sample_load_file_response() {
+  local path="$1"
+  local file_path="$2"
+  hot_sample_hotreq --op load-file --path "$path" --file-path "$file_path"
+}
+
+hot_sample_overlay_file_match() {
+  local path="$1"
+  local file_path="$2"
+  hot_sample_hotreq --op overlay-file-match --path "$path" --file-path "$file_path"
+}
+
+hot_sample_activate_generation() {
+  local generation="$1"
+  hot_sample_hotreq --op activate-generation --generation "$generation"
 }
 
 hot_sample_restore_file() {
@@ -77,6 +94,23 @@ hot_sample_restore_file() {
 
 hot_sample_current_generation() {
   hot_sample_hotreq --op current-generation | hot_sample_json_get generation
+}
+
+hot_sample_current_generation_retry() {
+  local attempts="${1:-40}"
+  local delay_seconds="${2:-0.25}"
+  local attempt
+  local generation
+
+  for ((attempt = 0; attempt < attempts; attempt += 1)); do
+    if generation="$(hot_sample_current_generation 2>/dev/null)"; then
+      printf '%s\n' "$generation"
+      return 0
+    fi
+    sleep "$delay_seconds"
+  done
+
+  return 1
 }
 
 hot_sample_probe_eval() {
