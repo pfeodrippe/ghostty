@@ -155,9 +155,14 @@ ocr_image_text() {
 }
 
 ghostty_pid() {
-  ps -axo pid=,command= | awk '
-    /\/Ghostty\.app\/Contents\/MacOS\/ghostty([[:space:]]|$)/ { pid = $1 }
-    END { if (pid != "") print pid }
+  ps -axo pid=,stat=,command= | awk '
+    /\/Ghostty\.app\/Contents\/MacOS\/ghostty([[:space:]]|$)/ {
+      pid = $1
+      stat = $2
+      if (stat ~ /^U/) next
+      if (pid + 0 > best_pid + 0) best_pid = pid
+    }
+    END { if (best_pid != "") print best_pid }
   '
 }
 
@@ -196,7 +201,7 @@ case "$window_name"$'\n'"$ocr_text" in
     ;;
 esac
 
-generation="$(hot_sample_current_generation)" || fail "unable to query hot runtime generation from live app"
+generation="$(hot_sample_current_generation_retry 80 0.25)" || fail "unable to query hot runtime generation from live app"
 
 printf 'PASS live Ghostty window healthy (pid=%s, generation=%s, window_id=%s, title=%s)\n' \
   "$pid" \

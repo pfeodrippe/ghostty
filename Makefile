@@ -13,7 +13,12 @@ HOT_ORPHAN_ROOTS ?= $(HOT_CACHE_DIR) $(notdir $(HOT_CACHE_DIR)) $(HOT_GLOBAL_CAC
 HOT_CACHE_RESOLVER ?= $(abspath $(PROJECT_DIR)/tools/resolve_hot_cache_dirs.py)
 HOT_RUNNER ?= $(abspath $(PROJECT_DIR)/tools/run_in_own_process_group.sh)
 HOT_ORPHAN_KILLER ?= $(abspath $(PROJECT_DIR)/tools/kill_hot_orphans.py)
-HOT_APP_PATH ?= $(abspath $(PROJECT_DIR)/zig-out/Ghostty.app/Contents/MacOS/ghostty)
+HOT_LAUNCHER ?= $(abspath $(PROJECT_DIR)/tools/hot_run_app.py)
+HOT_APP_BUNDLE ?= $(abspath $(PROJECT_DIR)/zig-out/Ghostty.app)
+HOT_RESOURCES_DIR ?= $(abspath $(PROJECT_DIR)/zig-out/share/ghostty)
+HOT_MANIFEST ?= $(abspath $(PROJECT_DIR)/zig-out/share/ghostty/GhosttyKit.hot.json)
+HOT_ZIG_LIB_DIR ?= $(abspath $(PROJECT_DIR)/../zig-hot-llvm-0.15.2/lib)
+HOT_RUN_DEFAULT_ARGS ?= --config-default-files=false --window-save-state=never --window-vsync=false
 RUN_ARGS ?=
 
 init:
@@ -70,30 +75,22 @@ hot-build:
 	$(HOT_RUNNER) $(HOT_ZIG) build $(HOT_FLAGS) --cache-dir "$$HOT_CACHE_DIR" --global-cache-dir "$$HOT_GLOBAL_CACHE_DIR" $(HOT_JOBS)
 .PHONY: hot-build
 
-hot-run:
-	@if [ -d macos/build ]; then xattr -cr macos/build; fi
-	@if [ -d macos/GhosttyKit.xcframework ]; then xattr -cr macos/GhosttyKit.xcframework; fi
-	@$(HOT_ORPHAN_KILLER) $(HOT_ORPHAN_ROOTS) >/dev/null 2>&1 || true
+hot-run: hot-build
 	@set -eu; \
-	pids="$$(pgrep -f '$(HOT_APP_PATH)' || true)"; \
-	if [ -n "$$pids" ]; then \
-		kill $$pids >/dev/null 2>&1 || true; \
-		sleep 1; \
-		still_running="$$(pgrep -f '$(HOT_APP_PATH)' || true)"; \
-		if [ -n "$$still_running" ]; then \
-			kill -9 $$still_running >/dev/null 2>&1 || true; \
-			sleep 1; \
-		fi; \
-		still_running="$$(pgrep -f '$(HOT_APP_PATH)' || true)"; \
-		if [ -n "$$still_running" ]; then \
-			printf 'error: stale Ghostty process survived hot-run teardown: %s\n' "$$still_running" >&2; \
-			exit 1; \
-		fi; \
+	run_args='$(strip $(RUN_ARGS))'; \
+	if [ -z "$$run_args" ]; then \
+		run_args='$(HOT_RUN_DEFAULT_ARGS)'; \
 	fi; \
-	rm -f $(PROJECT_DIR)/.nrepl-port; \
-	set -eu; \
-	eval "$$(python3 $(HOT_CACHE_RESOLVER) $(HOT_CACHE_DIR) $(HOT_GLOBAL_CACHE_DIR))"; \
-	$(HOT_RUNNER) $(HOT_ZIG) build run $(HOT_FLAGS) --cache-dir "$$HOT_CACHE_DIR" --global-cache-dir "$$HOT_GLOBAL_CACHE_DIR" $(HOT_JOBS) $(if $(RUN_ARGS),-- $(RUN_ARGS),)
+	python3 $(HOT_LAUNCHER) \
+		--repo-root $(PROJECT_DIR) \
+		--app-bundle $(HOT_APP_BUNDLE) \
+		--resources-dir $(HOT_RESOURCES_DIR) \
+		--port-file $(PROJECT_DIR)/.nrepl-port \
+		--hot-compiler $(HOT_ZIG) \
+		--hot-workspace $(PROJECT_DIR)/.zig-hot \
+		--hot-lib-dir $(HOT_ZIG_LIB_DIR) \
+		--hot-manifest $(HOT_MANIFEST) \
+		--run-args "$$run_args"
 .PHONY: hot-run
 
 hot-test:
