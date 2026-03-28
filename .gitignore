@@ -43,3 +43,4 @@ vgcore.*
 tools/__pycache__/
 
 **.zig-hot-**
+.copilot-*

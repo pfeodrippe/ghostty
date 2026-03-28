@@ -13,6 +13,7 @@ HOT_ORPHAN_ROOTS ?= $(HOT_CACHE_DIR) $(notdir $(HOT_CACHE_DIR)) $(HOT_GLOBAL_CAC
 HOT_CACHE_RESOLVER ?= $(abspath $(PROJECT_DIR)/tools/resolve_hot_cache_dirs.py)
 HOT_RUNNER ?= $(abspath $(PROJECT_DIR)/tools/run_in_own_process_group.sh)
 HOT_ORPHAN_KILLER ?= $(abspath $(PROJECT_DIR)/tools/kill_hot_orphans.py)
+HOT_APP_PATH ?= $(abspath $(PROJECT_DIR)/zig-out/Ghostty.app/Contents/MacOS/ghostty)
 RUN_ARGS ?=
 
 init:
@@ -74,6 +75,13 @@ hot-run:
 	@if [ -d macos/GhosttyKit.xcframework ]; then xattr -cr macos/GhosttyKit.xcframework; fi
 	@$(HOT_ORPHAN_KILLER) $(HOT_ORPHAN_ROOTS) >/dev/null 2>&1 || true
 	@set -eu; \
+	pids="$$(pgrep -f '$(HOT_APP_PATH)' || true)"; \
+	if [ -n "$$pids" ]; then \
+		kill $$pids >/dev/null 2>&1 || true; \
+		sleep 1; \
+	fi; \
+	rm -f $(PROJECT_DIR).nrepl-port; \
+	set -eu; \
 	eval "$$(python3 $(HOT_CACHE_RESOLVER) $(HOT_CACHE_DIR) $(HOT_GLOBAL_CACHE_DIR))"; \
 	$(HOT_RUNNER) $(HOT_ZIG) build run $(HOT_FLAGS) --cache-dir "$$HOT_CACHE_DIR" --global-cache-dir "$$HOT_GLOBAL_CACHE_DIR" $(HOT_JOBS) $(if $(RUN_ARGS),-- $(RUN_ARGS),)
 .PHONY: hot-run
