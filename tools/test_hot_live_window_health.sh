@@ -155,11 +155,17 @@ ocr_image_text() {
 }
 
 ghostty_pid() {
-  ps -axo pid=,command= | awk '/\/Ghostty\.app\/Contents\/MacOS\/ghostty$/ { pid = $1 } END { if (pid != "") print pid }'
+  ps -axo pid=,command= | awk '
+    /\/Ghostty\.app\/Contents\/MacOS\/ghostty([[:space:]]|$)/ { pid = $1 }
+    END { if (pid != "") print pid }
+  '
 }
 
 pid="$(ghostty_pid)"
 [[ -n "$pid" ]] || fail "no live Ghostty app process found"
+
+osascript -e 'tell application "Ghostty" to activate' >/dev/null 2>&1 || true
+sleep 0.5
 
 selected_window=""
 for _attempt in $(seq 1 40); do

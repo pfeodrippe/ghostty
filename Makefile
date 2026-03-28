@@ -79,8 +79,18 @@ hot-run:
 	if [ -n "$$pids" ]; then \
 		kill $$pids >/dev/null 2>&1 || true; \
 		sleep 1; \
+		still_running="$$(pgrep -f '$(HOT_APP_PATH)' || true)"; \
+		if [ -n "$$still_running" ]; then \
+			kill -9 $$still_running >/dev/null 2>&1 || true; \
+			sleep 1; \
+		fi; \
+		still_running="$$(pgrep -f '$(HOT_APP_PATH)' || true)"; \
+		if [ -n "$$still_running" ]; then \
+			printf 'error: stale Ghostty process survived hot-run teardown: %s\n' "$$still_running" >&2; \
+			exit 1; \
+		fi; \
 	fi; \
-	rm -f $(PROJECT_DIR).nrepl-port; \
+	rm -f $(PROJECT_DIR)/.nrepl-port; \
 	set -eu; \
 	eval "$$(python3 $(HOT_CACHE_RESOLVER) $(HOT_CACHE_DIR) $(HOT_GLOBAL_CACHE_DIR))"; \
 	$(HOT_RUNNER) $(HOT_ZIG) build run $(HOT_FLAGS) --cache-dir "$$HOT_CACHE_DIR" --global-cache-dir "$$HOT_GLOBAL_CACHE_DIR" $(HOT_JOBS) $(if $(RUN_ARGS),-- $(RUN_ARGS),)
