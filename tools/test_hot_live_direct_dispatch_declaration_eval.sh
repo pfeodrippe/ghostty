@@ -36,7 +36,12 @@ dispatch_entry_info() {
   hot_sample_hotreq --session root --op dispatch-entry-info --field "symbol=$symbol"
 }
 
-make_overlay() {
+eval_in_target_value() {
+  local code="$1"
+  hot_sample_eval_in_file "$target" "$code" | hot_sample_json_get value
+}
+
+make_declaration_overlay() {
   local overlay_path="$1"
   python3 - "$HOT_SAMPLE_REPO_ROOT/$target" "$overlay_path" <<'PY'
 from pathlib import Path
@@ -44,6 +49,32 @@ import sys
 
 src = Path(sys.argv[1]).read_text()
 overlay = Path(sys.argv[2])
+start_needle = 'pub const Dir = struct {'
+start = src.find(start_needle)
+if start == -1:
+    raise SystemExit("could not find Dir declaration")
+
+brace_index = src.find('{', start)
+if brace_index == -1:
+    raise SystemExit("could not find Dir opening brace")
+
+depth = 0
+end = None
+for i in range(brace_index, len(src)):
+    c = src[i]
+    if c == '{':
+        depth += 1
+    elif c == '}':
+        depth -= 1
+        if depth == 0:
+            if i + 1 >= len(src) or src[i + 1] != ';':
+                raise SystemExit("Dir declaration did not end with '};'")
+            end = i + 2
+            break
+if end is None:
+    raise SystemExit("could not find Dir declaration end")
+
+decl = src[start:end]
 needle = '''    pub fn iterator(self: *const Dir) !ReportIterator {
         var dir = std.fs.openDirAbsolute(
             self.path,
@@ -59,17 +90,17 @@ needle = '''    pub fn iterator(self: *const Dir) !ReportIterator {
 '''
 replacement = '''    pub fn iterator(self: *const Dir) !ReportIterator {
         _ = self;
-        return .{};
+        return error.Unexpected;
     }
 '''
-count = src.count(needle)
+count = decl.count(needle)
 if count != 1:
-    raise SystemExit(f"expected 1 Dir.iterator body, found {count}")
-overlay.write_text(src.replace(needle, replacement, 1))
+    raise SystemExit(f"expected 1 Dir.iterator body in declaration, found {count}")
+overlay.write_text(decl.replace(needle, replacement, 1))
 PY
 }
 
-bash "$script_dir/test_hot_live_window_health.sh" >/dev/null || fail "live Ghostty window is not healthy before direct dispatch test"
+bash "$script_dir/test_hot_live_window_health.sh" >/dev/null || fail "live Ghostty window is not healthy before declaration direct-dispatch test"
 
 target="src/crash/dir.zig"
 symbol="crash.dir.Dir.iterator"
@@ -81,8 +112,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-overlay="$tmpdir/renderer_size_dispatch_overlay.zig"
-make_overlay "$overlay"
+overlay="$tmpdir/dir_iterator_decl_overlay.zig"
+make_declaration_overlay "$overlay"
 
 generation_before="$(hot_sample_current_generation)"
 before_info="$(dispatch_entry_info "$symbol")" || fail "dispatch-entry-info failed before activation"
@@ -97,18 +128,19 @@ is_native_impl_kind "$before_impl_kind" || fail "unexpected impl-kind before act
 dispatch_response="$(
   hot_sample_hotreq \
     --session root \
-    --op load-file \
+    --op eval \
+    --scope global \
     --path "$target" \
-    --file-path "$overlay" \
-    --field activation=dispatch
-)" || fail "direct dispatch load-file failed"
+    --field activation=dispatch \
+    --code - < "$overlay"
+)" || fail "direct-dispatch declaration eval failed"
 
-[[ "$(status_of "$dispatch_response")" == "[\"done\"]" ]] || fail "unexpected direct dispatch status"
+[[ "$(status_of "$dispatch_response")" == "[\"done\"]" ]] || fail "unexpected declaration direct-dispatch status"
 [[ "$(string_field "$dispatch_response" activation-kind)" == "dispatch" ]] || fail "activation-kind was not dispatch"
-[[ "$(int_field "$dispatch_response" generation)" == "$generation_before" ]] || fail "direct dispatch unexpectedly changed generation in response"
+[[ "$(int_field "$dispatch_response" generation)" == "$generation_before" ]] || fail "direct-dispatch declaration eval unexpectedly changed generation in response"
 
 generation_after="$(hot_sample_current_generation)"
-[[ "$generation_after" == "$generation_before" ]] || fail "direct dispatch changed current generation: before=$generation_before after=$generation_after"
+[[ "$generation_after" == "$generation_before" ]] || fail "direct-dispatch declaration eval changed current generation: before=$generation_before after=$generation_after"
 
 after_info="$(dispatch_entry_info "$symbol")" || fail "dispatch-entry-info failed after activation"
 [[ "$(status_of "$after_info")" == "[\"done\"]" ]] || fail "unexpected dispatch-entry-info status after activation"
@@ -120,28 +152,40 @@ after_generation="$(int_field "$after_info" generation)"
 after_impl_kind="$(string_field "$after_info" impl-kind)"
 
 [[ "$after_impl_kind" == "interpreted" ]] || fail "impl-kind after activation was $after_impl_kind"
-[[ "$after_impl_id" != "$before_impl_id" ]] || fail "active impl id did not change under direct dispatch"
+[[ "$after_impl_id" != "$before_impl_id" ]] || fail "active impl id did not change under declaration direct dispatch"
 [[ "$after_dispatch_index" == "$before_dispatch_index" ]] || fail "dispatch index changed unexpectedly"
 [[ "$after_abi_id" == "$before_abi_id" ]] || fail "abi signature id changed unexpectedly"
 [[ "$after_type_version" == "$before_type_version" ]] || fail "type identity version changed unexpectedly"
 [[ "$after_generation" == "$generation_before" ]] || fail "dispatch entry generation changed unexpectedly"
 
 restore_before="$generation_after"
-hot_sample_hotreq --session root --op load-file --path "$target" --file-path "$HOT_SAMPLE_REPO_ROOT/$target" >/dev/null || fail "failed to restore $target after dispatch activation"
+hot_sample_hotreq --session root --op load-file --path "$target" --file-path "$HOT_SAMPLE_REPO_ROOT/$target" >/dev/null || fail "failed to restore $target after declaration direct-dispatch activation"
 restore_after="$(hot_sample_current_generation_retry)"
 [[ "$restore_after" =~ ^[0-9]+$ ]] || fail "restore generation was not numeric"
 if (( restore_after <= restore_before )); then
   fail "restoring original file did not publish a new generation: before=$restore_before after=$restore_after"
 fi
 
-bash "$script_dir/test_hot_live_window_health.sh" >/dev/null || fail "live Ghostty window is not healthy after direct dispatch test"
+restored_info="$(dispatch_entry_info "$symbol")" || fail "dispatch-entry-info failed after restore"
+[[ "$(status_of "$restored_info")" == "[\"done\"]" ]] || fail "unexpected dispatch-entry-info status after restore"
+restored_impl_kind="$(string_field "$restored_info" impl-kind)"
+restored_dispatch_index="$(int_field "$restored_info" dispatch-index)"
+restored_abi_id="$(int_field "$restored_info" abi-signature-id)"
+restored_type_version="$(int_field "$restored_info" type-identity-version)"
+is_native_impl_kind "$restored_impl_kind" || fail "impl-kind after restore was $restored_impl_kind"
+[[ "$restored_dispatch_index" == "$before_dispatch_index" ]] || fail "dispatch index changed unexpectedly after restore"
+[[ "$restored_abi_id" == "$before_abi_id" ]] || fail "abi signature id changed unexpectedly after restore"
+[[ "$restored_type_version" == "$before_type_version" ]] || fail "type identity version changed unexpectedly after restore"
+
+bash "$script_dir/test_hot_live_window_health.sh" >/dev/null || fail "live Ghostty window is not healthy after declaration direct-dispatch test"
 trap - EXIT
 rm -rf "$tmpdir"
 
-printf 'PASS live direct-dispatch load-file swapped %s without generation churn (symbol=%s impl=%s->%s generation=%s restored_generation=%s)\n' \
+printf 'PASS live direct-dispatch declaration eval swapped %s without generation churn (symbol=%s impl=%s->%s->%s generation=%s restored_generation=%s)\n' \
   "$target" \
   "$symbol" \
   "$before_impl_kind" \
   "$after_impl_kind" \
+  "$restored_impl_kind" \
   "$generation_after" \
   "$restore_after"
