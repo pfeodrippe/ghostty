@@ -43,13 +43,7 @@ replacement = '''    fn addCodepoint(self: *RunIterator, hasher: anytype, cp: u3
 count = src.count(needle)
 if count != 1:
     raise SystemExit(f"expected 1 print branch, found {count}")
-marker = '''
-
-pub fn __hot_sample_output_overlay_active() bool {
-    return true;
-}
-'''
-overlay.write_text(src.replace(needle, replacement, 1).rstrip() + marker)
+overlay.write_text(src.replace(needle, replacement, 1))
 PY
 
 match_response="$(hot_sample_overlay_file_match "$target" "$overlay")"
@@ -77,6 +71,16 @@ fi
 
 generation_before="$(hot_sample_current_generation)"
 
+status_of() {
+  printf '%s\n' "$1" | hot_sample_json_get status
+}
+
+string_field() {
+  local response="$1"
+  local key="$2"
+  printf '%s\n' "$response" | hot_sample_json_get "$key"
+}
+
 if [[ "$effective_mode" == "on" && "$active" == "true" ]]; then
   printf 'Already active %s replacement=.->! generation=%s\n' \
     "$target" \
@@ -90,22 +94,56 @@ if [[ "$effective_mode" == "off" && "$active" != "true" ]]; then
 fi
 
 if [[ "$effective_mode" == "off" ]]; then
-  hot_sample_restore_file "$target"
-  generation_after="$(hot_sample_current_generation_retry)"
-  printf 'Deactivated output overlay on %s (generation %s -> %s).\n' \
-    "$target" \
-    "$generation_before" \
-    "$generation_after"
+  dispatch_response="$(
+    hot_sample_hotreq \
+      --op load-file \
+      --path "$target" \
+      --file-path "$HOT_SAMPLE_REPO_ROOT/$target" \
+      --field activation=dispatch \
+      2>/dev/null
+  )" || dispatch_response=""
+
+  if [[ -n "$dispatch_response" ]] && [[ "$(status_of "$dispatch_response")" == "[\"done\"]" ]] && [[ "$(string_field "$dispatch_response" activation-kind)" == "dispatch" ]]; then
+    generation_after="$(hot_sample_current_generation_retry)"
+    printf 'Deactivated output overlay on %s with dispatch (generation %s -> %s).\n' \
+      "$target" \
+      "$generation_before" \
+      "$generation_after"
+  else
+    hot_sample_restore_file "$target"
+    generation_after="$(hot_sample_current_generation_retry)"
+    printf 'Deactivated output overlay on %s with publication (generation %s -> %s).\n' \
+      "$target" \
+      "$generation_before" \
+      "$generation_after"
+  fi
   exit 0
 fi
 
-hot_sample_load_file "$target" "$overlay"
-generation_after="$(hot_sample_current_generation_retry)"
+dispatch_response="$(
+  hot_sample_hotreq \
+    --op load-file \
+    --path "$target" \
+    --file-path "$overlay" \
+    --field activation=dispatch \
+    2>/dev/null
+)" || dispatch_response=""
 
-printf 'Activated output overlay on %s (generation %s -> %s).\n' \
-  "$target" \
-  "$generation_before" \
-  "$generation_after"
+if [[ -n "$dispatch_response" ]] && [[ "$(status_of "$dispatch_response")" == "[\"done\"]" ]] && [[ "$(string_field "$dispatch_response" activation-kind)" == "dispatch" ]]; then
+  generation_after="$(hot_sample_current_generation_retry)"
+  printf 'Activated output overlay on %s with dispatch (generation %s -> %s).\n' \
+    "$target" \
+    "$generation_before" \
+    "$generation_after"
+else
+  hot_sample_load_file "$target" "$overlay"
+  generation_after="$(hot_sample_current_generation_retry)"
+  printf 'Activated output overlay on %s with publication (generation %s -> %s).\n' \
+    "$target" \
+    "$generation_before" \
+    "$generation_after"
+fi
+
 printf '%s\n' \
   'Now run a command in Ghostty that prints periods, for example:' \
   "  printf 'a.b.c\\n'" \

@@ -159,23 +159,34 @@ after_impl_kind="$(string_field "$after_info" impl-kind)"
 [[ "$after_generation" == "$generation_before" ]] || fail "dispatch entry generation changed unexpectedly"
 
 restore_before="$generation_after"
-hot_sample_hotreq --session root --op load-file --path "$target" --file-path "$HOT_SAMPLE_REPO_ROOT/$target" >/dev/null || fail "failed to restore $target after declaration direct-dispatch activation"
+restore_response="$(
+  hot_sample_hotreq \
+    --session root \
+    --op load-file \
+    --path "$target" \
+    --file-path "$HOT_SAMPLE_REPO_ROOT/$target" \
+    --field activation=dispatch
+)" || fail "failed to restore $target after declaration direct-dispatch activation"
+[[ "$(status_of "$restore_response")" == "[\"done\"]" ]] || fail "unexpected declaration direct-dispatch restore status"
+[[ "$(string_field "$restore_response" activation-kind)" == "dispatch" ]] || fail "restore activation-kind was not dispatch"
+[[ "$(int_field "$restore_response" generation)" == "$restore_before" ]] || fail "direct-dispatch declaration restore unexpectedly changed generation in response"
 restore_after="$(hot_sample_current_generation_retry)"
-[[ "$restore_after" =~ ^[0-9]+$ ]] || fail "restore generation was not numeric"
-if (( restore_after <= restore_before )); then
-  fail "restoring original file did not publish a new generation: before=$restore_before after=$restore_after"
-fi
+[[ "$restore_after" == "$restore_before" ]] || fail "direct-dispatch declaration restore changed generation: before=$restore_before after=$restore_after"
 
 restored_info="$(dispatch_entry_info "$symbol")" || fail "dispatch-entry-info failed after restore"
 [[ "$(status_of "$restored_info")" == "[\"done\"]" ]] || fail "unexpected dispatch-entry-info status after restore"
+restored_impl_id="$(int_field "$restored_info" active-impl-id)"
 restored_impl_kind="$(string_field "$restored_info" impl-kind)"
 restored_dispatch_index="$(int_field "$restored_info" dispatch-index)"
 restored_abi_id="$(int_field "$restored_info" abi-signature-id)"
 restored_type_version="$(int_field "$restored_info" type-identity-version)"
+restored_generation="$(int_field "$restored_info" generation)"
 is_native_impl_kind "$restored_impl_kind" || fail "impl-kind after restore was $restored_impl_kind"
+[[ "$restored_impl_id" == "$before_impl_id" ]] || fail "active impl id did not return to native under declaration direct dispatch restore"
 [[ "$restored_dispatch_index" == "$before_dispatch_index" ]] || fail "dispatch index changed unexpectedly after restore"
 [[ "$restored_abi_id" == "$before_abi_id" ]] || fail "abi signature id changed unexpectedly after restore"
 [[ "$restored_type_version" == "$before_type_version" ]] || fail "type identity version changed unexpectedly after restore"
+[[ "$restored_generation" == "$generation_before" ]] || fail "dispatch entry generation changed unexpectedly after restore"
 
 bash "$script_dir/test_hot_live_window_health.sh" >/dev/null || fail "live Ghostty window is not healthy after declaration direct-dispatch test"
 trap - EXIT

@@ -43,13 +43,7 @@ replacement = '''    fn addCodepoint(self: *RunIterator, hasher: anytype, cp: u3
 count = src.count(needle)
 if count != 1:
     raise SystemExit(f"expected 1 print branch, found {count}")
-marker = '''
-
-pub fn __hot_sample_output_overlay_active() bool {
-    return true;
-}
-'''
-overlay.write_text(src.replace(needle, replacement, 1).rstrip() + marker)
+overlay.write_text(src.replace(needle, replacement, 1))
 PY
 }
 
@@ -119,14 +113,14 @@ if [[ "$(raw_active "$overlay")" == "true" ]]; then
   before="$(hot_sample_current_generation)"
   run_and_capture "$sample_script" off >/dev/null
   after="$(hot_sample_current_generation_retry)"
-  assert_generation_increased "$before" "$after"
+  assert_generation_same "$before" "$after"
 fi
 assert_consistent_state "$overlay" inactive
 
 before="$(hot_sample_current_generation)"
 run_and_capture "$sample_script" on >/dev/null
 after="$(hot_sample_current_generation_retry)"
-assert_generation_increased "$before" "$after"
+assert_generation_same "$before" "$after"
 assert_consistent_state "$overlay" active
 
 before="$after"
@@ -138,7 +132,7 @@ assert_consistent_state "$overlay" active
 before="$after"
 run_and_capture "$sample_script" off >/dev/null
 after="$(hot_sample_current_generation_retry)"
-assert_generation_increased "$before" "$after"
+assert_generation_same "$before" "$after"
 assert_consistent_state "$overlay" inactive
 
 before="$after"
@@ -150,13 +144,13 @@ assert_consistent_state "$overlay" inactive
 before="$after"
 run_and_capture "$sample_script" toggle >/dev/null
 after="$(hot_sample_current_generation_retry)"
-assert_generation_increased "$before" "$after"
+assert_generation_same "$before" "$after"
 assert_consistent_state "$overlay" active
 
 before="$after"
 run_and_capture "$sample_script" toggle >/dev/null
 after="$(hot_sample_current_generation_retry)"
-assert_generation_increased "$before" "$after"
+assert_generation_same "$before" "$after"
 assert_consistent_state "$overlay" inactive
 
 printf 'PASS live output toggle helper remained consistent through on/off/toggle cycles (generation=%s)\n' "$after"
