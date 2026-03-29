@@ -53,37 +53,37 @@ bound_conditional_response="$(hot_sample_hotreq --op eval --code 'const ok = 6 *
 bound_conditional_value="$(decode_text_value "$bound_conditional_response")"
 [[ "$bound_conditional_value" == "ok" ]] || fail "unexpected bound conditional eval result: $bound_conditional_value"
 
-compiler_fallback_response="$(hot_sample_hotreq --op eval --code $'blk: {\n    if (6 * 7 == 42) {\n        break :blk \"ok\";\n    } else {\n        break :blk \"bad\";\n    }\n}')" || fail "compiler fallback root eval failed"
-compiler_fallback_value="$(decode_text_value "$compiler_fallback_response")"
-[[ "$compiler_fallback_value" == "ok" ]] || fail "unexpected compiler fallback eval result: $compiler_fallback_value"
+labeled_block_response="$(hot_sample_hotreq --op eval --code $'blk: {\n    if (6 * 7 == 42) {\n        break :blk \"ok\";\n    } else {\n        break :blk \"bad\";\n    }\n}')" || fail "labeled-block root eval failed"
+labeled_block_value="$(decode_text_value "$labeled_block_response")"
+[[ "$labeled_block_value" == "ok" ]] || fail "unexpected labeled-block eval result: $labeled_block_value"
 
-compiler_switch_response="$(hot_sample_hotreq --op eval --code 'switch (6 * 7 == 42) { true => "ok", false => "bad" }')" || fail "compiler switch fallback root eval failed"
-compiler_switch_value="$(decode_text_value "$compiler_switch_response")"
-[[ "$compiler_switch_value" == "ok" ]] || fail "unexpected compiler switch eval result: $compiler_switch_value"
+switch_bool_response="$(hot_sample_hotreq --op eval --code 'switch (6 * 7 == 42) { true => "ok", false => "bad" }')" || fail "switch-bool root eval failed"
+switch_bool_value="$(decode_text_value "$switch_bool_response")"
+[[ "$switch_bool_value" == "ok" ]] || fail "unexpected switch-bool eval result: $switch_bool_value"
 
-compiler_switch_integer_response="$(hot_sample_hotreq --op eval --code 'switch (6 * 7) { 41 => "bad", 42 => "ok", else => "bad" }')" || fail "compiler integer-switch fallback root eval failed"
-compiler_switch_integer_value="$(decode_text_value "$compiler_switch_integer_response")"
-[[ "$compiler_switch_integer_value" == "ok" ]] || fail "unexpected compiler integer-switch eval result: $compiler_switch_integer_value"
+switch_integer_response="$(hot_sample_hotreq --op eval --code 'switch (6 * 7) { 41 => "bad", 42 => "ok", else => "bad" }')" || fail "switch-integer root eval failed"
+switch_integer_value="$(decode_text_value "$switch_integer_response")"
+[[ "$switch_integer_value" == "ok" ]] || fail "unexpected switch-integer eval result: $switch_integer_value"
 
-compiler_optional_payload_if_response="$(hot_sample_hotreq --op eval --code 'if (@as(?[]const u8, "ok")) |value| value else "bad"')" || fail "compiler optional-payload-if fallback root eval failed"
-compiler_optional_payload_if_value="$(decode_text_value "$compiler_optional_payload_if_response")"
-[[ "$compiler_optional_payload_if_value" == "ok" ]] || fail "unexpected compiler optional-payload-if eval result: $compiler_optional_payload_if_value"
+optional_payload_if_response="$(hot_sample_hotreq --op eval --code 'if (@as(?[]const u8, "ok")) |value| value else "bad"')" || fail "optional-payload-if root eval failed"
+optional_payload_if_value="$(decode_text_value "$optional_payload_if_response")"
+[[ "$optional_payload_if_value" == "ok" ]] || fail "unexpected optional-payload-if eval result: $optional_payload_if_value"
 
-compiler_error_union_catch_response="$(hot_sample_hotreq --op eval --code '(@as(anyerror![]const u8, "ok") catch "bad")')" || fail "compiler error-union-catch fallback root eval failed"
-compiler_error_union_catch_value="$(decode_text_value "$compiler_error_union_catch_response")"
-[[ "$compiler_error_union_catch_value" == "ok" ]] || fail "unexpected compiler error-union-catch eval result: $compiler_error_union_catch_value"
+error_union_catch_response="$(hot_sample_hotreq --op eval --code '(@as(anyerror![]const u8, "ok") catch "bad")')" || fail "error-union-catch root eval failed"
+error_union_catch_value="$(decode_text_value "$error_union_catch_response")"
+[[ "$error_union_catch_value" == "ok" ]] || fail "unexpected error-union-catch eval result: $error_union_catch_value"
 
-compiler_error_union_payload_if_response="$(hot_sample_hotreq --op eval --code 'if (@as(anyerror![]const u8, "ok")) |value| value else |_| "bad"')" || fail "compiler error-union-payload-if fallback root eval failed"
-compiler_error_union_payload_if_value="$(decode_text_value "$compiler_error_union_payload_if_response")"
-[[ "$compiler_error_union_payload_if_value" == "ok" ]] || fail "unexpected compiler error-union-payload-if eval result: $compiler_error_union_payload_if_value"
+error_union_payload_if_response="$(hot_sample_hotreq --op eval --code 'if (@as(anyerror![]const u8, "ok")) |value| value else |_| "bad"')" || fail "error-union-payload-if root eval failed"
+error_union_payload_if_value="$(decode_text_value "$error_union_payload_if_response")"
+[[ "$error_union_payload_if_value" == "ok" ]] || fail "unexpected error-union-payload-if eval result: $error_union_payload_if_value"
 
-compiler_logical_and_response="$(hot_sample_hotreq --op eval --code 'if ((6 * 7 == 42) and (1 + 1 == 2)) "ok" else "bad"')" || fail "compiler logical-and fallback root eval failed"
-compiler_logical_and_value="$(decode_text_value "$compiler_logical_and_response")"
-[[ "$compiler_logical_and_value" == "ok" ]] || fail "unexpected compiler logical-and eval result: $compiler_logical_and_value"
+logical_and_response="$(hot_sample_hotreq --op eval --code 'if ((6 * 7 == 42) and (1 + 1 == 2)) "ok" else "bad"')" || fail "logical-and root eval failed"
+logical_and_value="$(decode_text_value "$logical_and_response")"
+[[ "$logical_and_value" == "ok" ]] || fail "unexpected logical-and eval result: $logical_and_value"
 
-compiler_logical_or_response="$(hot_sample_hotreq --op eval --code 'if ((6 * 7 != 42) or (1 + 1 == 2)) "ok" else "bad"')" || fail "compiler logical-or fallback root eval failed"
-compiler_logical_or_value="$(decode_text_value "$compiler_logical_or_response")"
-[[ "$compiler_logical_or_value" == "ok" ]] || fail "unexpected compiler logical-or eval result: $compiler_logical_or_value"
+logical_or_response="$(hot_sample_hotreq --op eval --code 'if ((6 * 7 != 42) or (1 + 1 == 2)) "ok" else "bad"')" || fail "logical-or root eval failed"
+logical_or_value="$(decode_text_value "$logical_or_response")"
+[[ "$logical_or_value" == "ok" ]] || fail "unexpected logical-or eval result: $logical_or_value"
 
 compiler_min_response="$(hot_sample_hotreq --op eval --code 'if (@min(42, 100) == 42) "ok" else "bad"')" || fail "compiler builtin-min fallback root eval failed"
 compiler_min_value="$(decode_text_value "$compiler_min_response")"
@@ -93,9 +93,9 @@ compiler_max_response="$(hot_sample_hotreq --op eval --code 'if (@max(40, 42) ==
 compiler_max_value="$(decode_text_value "$compiler_max_response")"
 [[ "$compiler_max_value" == "ok" ]] || fail "unexpected compiler builtin-max eval result: $compiler_max_value"
 
-compiler_orelse_response="$(hot_sample_hotreq --op eval --code 'if ((@as(?i32, 42) orelse 0) == 42) "ok" else "bad"')" || fail "compiler orelse fallback root eval failed"
-compiler_orelse_value="$(decode_text_value "$compiler_orelse_response")"
-[[ "$compiler_orelse_value" == "ok" ]] || fail "unexpected compiler orelse eval result: $compiler_orelse_value"
+orelse_response="$(hot_sample_hotreq --op eval --code 'if ((@as(?i32, 42) orelse 0) == 42) "ok" else "bad"')" || fail "orelse root eval failed"
+orelse_value="$(decode_text_value "$orelse_response")"
+[[ "$orelse_value" == "ok" ]] || fail "unexpected orelse eval result: $orelse_value"
 
 second_literal_response="$(hot_sample_hotreq --op eval --code '"pong"')" || fail "second root literal eval failed"
 second_literal_value="$(decode_text_value "$second_literal_response")"
@@ -105,7 +105,7 @@ generation_after="$(hot_sample_current_generation)"
 [[ "$generation_before" == "$generation_after" ]] || fail \
   "eval changed generation unexpectedly: before=$generation_before after=$generation_after"
 
-printf 'PASS live eval path works (generation=%s, literal=%s, block=%s, grouped=%s, negated=%s, arithmetic=%s, boolean=%s, conditional=%s, bound_conditional=%s, compiler_fallback=%s, compiler_switch=%s, compiler_switch_integer=%s, compiler_optional_payload_if=%s, compiler_error_union_catch=%s, compiler_error_union_payload_if=%s, compiler_logical_and=%s, compiler_logical_or=%s, compiler_min=%s, compiler_max=%s, compiler_orelse=%s, second=%s)\n' \
+printf 'PASS live eval path works (generation=%s, literal=%s, block=%s, grouped=%s, negated=%s, arithmetic=%s, boolean=%s, conditional=%s, bound_conditional=%s, labeled_block=%s, switch_bool=%s, switch_integer=%s, optional_payload_if=%s, error_union_catch=%s, error_union_payload_if=%s, logical_and=%s, logical_or=%s, compiler_min=%s, compiler_max=%s, orelse=%s, second=%s)\n' \
   "$generation_after" \
   "$literal_value" \
   "$block_value" \
@@ -115,15 +115,15 @@ printf 'PASS live eval path works (generation=%s, literal=%s, block=%s, grouped=
   "$boolean_value" \
   "$conditional_value" \
   "$bound_conditional_value" \
-  "$compiler_fallback_value" \
-  "$compiler_switch_value" \
-  "$compiler_switch_integer_value" \
-  "$compiler_optional_payload_if_value" \
-  "$compiler_error_union_catch_value" \
-  "$compiler_error_union_payload_if_value" \
-  "$compiler_logical_and_value" \
-  "$compiler_logical_or_value" \
+  "$labeled_block_value" \
+  "$switch_bool_value" \
+  "$switch_integer_value" \
+  "$optional_payload_if_value" \
+  "$error_union_catch_value" \
+  "$error_union_payload_if_value" \
+  "$logical_and_value" \
+  "$logical_or_value" \
   "$compiler_min_value" \
   "$compiler_max_value" \
-  "$compiler_orelse_value" \
+  "$orelse_value" \
   "$second_literal_value"
