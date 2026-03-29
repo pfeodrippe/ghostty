@@ -57,6 +57,10 @@ compiler_fallback_response="$(hot_sample_hotreq --op eval --code $'blk: {\n    i
 compiler_fallback_value="$(decode_text_value "$compiler_fallback_response")"
 [[ "$compiler_fallback_value" == "ok" ]] || fail "unexpected compiler fallback eval result: $compiler_fallback_value"
 
+compiler_switch_response="$(hot_sample_hotreq --op eval --code 'switch (6 * 7 == 42) { true => "ok", false => "bad" }')" || fail "compiler switch fallback root eval failed"
+compiler_switch_value="$(decode_text_value "$compiler_switch_response")"
+[[ "$compiler_switch_value" == "ok" ]] || fail "unexpected compiler switch eval result: $compiler_switch_value"
+
 second_literal_response="$(hot_sample_hotreq --op eval --code '"pong"')" || fail "second root literal eval failed"
 second_literal_value="$(decode_text_value "$second_literal_response")"
 [[ "$second_literal_value" == "pong" ]] || fail "unexpected second literal eval result: $second_literal_value"
@@ -65,7 +69,7 @@ generation_after="$(hot_sample_current_generation)"
 [[ "$generation_before" == "$generation_after" ]] || fail \
   "eval changed generation unexpectedly: before=$generation_before after=$generation_after"
 
-printf 'PASS live eval path works (generation=%s, literal=%s, block=%s, grouped=%s, negated=%s, arithmetic=%s, boolean=%s, conditional=%s, bound_conditional=%s, compiler_fallback=%s, second=%s)\n' \
+printf 'PASS live eval path works (generation=%s, literal=%s, block=%s, grouped=%s, negated=%s, arithmetic=%s, boolean=%s, conditional=%s, bound_conditional=%s, compiler_fallback=%s, compiler_switch=%s, second=%s)\n' \
   "$generation_after" \
   "$literal_value" \
   "$block_value" \
@@ -76,4 +80,5 @@ printf 'PASS live eval path works (generation=%s, literal=%s, block=%s, grouped=
   "$conditional_value" \
   "$bound_conditional_value" \
   "$compiler_fallback_value" \
+  "$compiler_switch_value" \
   "$second_literal_value"
