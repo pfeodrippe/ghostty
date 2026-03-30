@@ -219,6 +219,14 @@ pub fn build(b: *std.Build) !void {
                     const manifest_rel_path = "share/ghostty/ghostty.hot.json";
                     const manifest_install = b.addInstallFile(manifest, manifest_rel_path);
                     run_cmd.step.dependOn(&manifest_install.step);
+                    if (exe.hot_manifest_support_dir) |support_dir| {
+                        const support_install = b.addInstallDirectory(.{
+                            .source_dir = support_dir,
+                            .install_dir = .prefix,
+                            .install_subdir = b.fmt("share/ghostty/{s}", .{exe.hot_manifest_support_subdir.?}),
+                        });
+                        run_cmd.step.dependOn(&support_install.step);
+                    }
                     run_cmd.setEnvironmentVariable("ZIG_HOT_MANIFEST", b.getInstallPath(.prefix, manifest_rel_path));
                 }
             }

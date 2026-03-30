@@ -111,6 +111,12 @@ string_field() {
   printf '%s\n' "$response" | json_get "$key"
 }
 
+int_field() {
+  local response="$1"
+  local key="$2"
+  printf '%s\n' "$response" | json_get "$key"
+}
+
 assert_done_response() {
   local output_path="$1"
   local expected_activation="$2"
@@ -205,6 +211,12 @@ assert_done_response "$dispatch_ab_output_file" "dispatch"
 dispatch_generation_after="$(hot_sample_current_generation_retry)"
 [[ "$dispatch_generation_after" == "$dispatch_generation_before" ]] || fail "dispatch A->B changed generation unexpectedly: before=$dispatch_generation_before after=$dispatch_generation_after"
 printf 'load_file_dispatch_a_to_b_ms=%s target=%s generation=%s\n' "$dispatch_ab_ms" "$target" "$dispatch_generation_after"
+printf 'load_file_dispatch_a_to_b_compile=%s root_deps=%s/%s modules=%s/%s\n' \
+  "$(string_field "$(cat "$dispatch_ab_output_file")" candidate-compile-skipped)" \
+  "$(int_field "$(cat "$dispatch_ab_output_file")" compile-root-deps-used)" \
+  "$(int_field "$(cat "$dispatch_ab_output_file")" compile-root-deps-total)" \
+  "$(int_field "$(cat "$dispatch_ab_output_file")" compile-modules-used)" \
+  "$(int_field "$(cat "$dispatch_ab_output_file")" compile-modules-total)"
 
 dispatch_generation_before="$dispatch_generation_after"
 dispatch_bc_ms="$(
@@ -220,6 +232,12 @@ assert_done_response "$dispatch_bc_output_file" "dispatch"
 dispatch_generation_after="$(hot_sample_current_generation_retry)"
 [[ "$dispatch_generation_after" == "$dispatch_generation_before" ]] || fail "dispatch B->C changed generation unexpectedly: before=$dispatch_generation_before after=$dispatch_generation_after"
 printf 'load_file_dispatch_b_to_c_ms=%s target=%s generation=%s\n' "$dispatch_bc_ms" "$target" "$dispatch_generation_after"
+printf 'load_file_dispatch_b_to_c_compile=%s root_deps=%s/%s modules=%s/%s\n' \
+  "$(string_field "$(cat "$dispatch_bc_output_file")" candidate-compile-skipped)" \
+  "$(int_field "$(cat "$dispatch_bc_output_file")" compile-root-deps-used)" \
+  "$(int_field "$(cat "$dispatch_bc_output_file")" compile-root-deps-total)" \
+  "$(int_field "$(cat "$dispatch_bc_output_file")" compile-modules-used)" \
+  "$(int_field "$(cat "$dispatch_bc_output_file")" compile-modules-total)"
 
 hot_sample_restore_file "$target" >/dev/null || fail "failed to restore target before publication measurement"
 

@@ -169,6 +169,14 @@ pub fn init(
                 const manifest_rel_path = "share/ghostty/GhosttyKit.hot.json";
                 const manifest_install = b.addInstallFile(manifest, manifest_rel_path);
                 open.step.dependOn(&manifest_install.step);
+                if (deps.xcframework.hot_manifest_support_dir) |support_dir| {
+                    const support_install = b.addInstallDirectory(.{
+                        .source_dir = support_dir,
+                        .install_dir = .prefix,
+                        .install_subdir = b.fmt("share/ghostty/{s}", .{deps.xcframework.hot_manifest_support_subdir.?}),
+                    });
+                    open.step.dependOn(&support_install.step);
+                }
                 open.setEnvironmentVariable("ZIG_HOT_MANIFEST", b.getInstallPath(.prefix, manifest_rel_path));
             }
         }

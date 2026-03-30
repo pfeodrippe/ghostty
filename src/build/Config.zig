@@ -138,11 +138,11 @@ pub fn init(b: *std.Build, appVersion: []const u8) !Config {
 
     //---------------------------------------------------------------
     // Target-specific properties
-    config.xcframework_target = b.option(
+    const requested_xcframework_target = b.option(
         XCFrameworkTarget,
         "xcframework-target",
         "The target for the xcframework.",
-    ) orelse .universal;
+    );
 
     //---------------------------------------------------------------
     // Comptime Interfaces
@@ -232,6 +232,13 @@ pub fn init(b: *std.Build, appVersion: []const u8) !Config {
         "hot",
         "Build Ghostty with Zig hot reload enabled for local development.",
     ) orelse false;
+    config.xcframework_target = requested_xcframework_target orelse if (config.hot and
+        builtin.target.os.tag.isDarwin() and
+        target.result.os.tag == .macos and
+        config.app_runtime == .none)
+        .native
+    else
+        .universal;
 
     //---------------------------------------------------------------
     // Ghostty Exe Properties

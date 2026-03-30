@@ -14,6 +14,8 @@ step: *std.Build.Step,
 output: std.Build.LazyPath,
 dsym: ?std.Build.LazyPath,
 hot_manifest: ?std.Build.LazyPath,
+hot_manifest_support_dir: ?std.Build.LazyPath,
+hot_manifest_support_subdir: ?[]const u8,
 
 pub fn initStatic(
     b: *std.Build,
@@ -58,6 +60,8 @@ pub fn initStatic(
         .output = lib.getEmittedBin(),
         .dsym = null,
         .hot_manifest = emittedHotManifest(lib, deps.config.hot),
+        .hot_manifest_support_dir = emittedHotManifestSupportDir(lib, deps.config.hot),
+        .hot_manifest_support_subdir = emittedHotManifestSupportSubdir(b, lib, deps.config.hot),
     };
 
     // Create a static lib that contains all our dependencies.
@@ -75,6 +79,8 @@ pub fn initStatic(
         // Static libraries cannot have dSYMs because they aren't linked.
         .dsym = null,
         .hot_manifest = emittedHotManifest(lib, deps.config.hot),
+        .hot_manifest_support_dir = emittedHotManifestSupportDir(lib, deps.config.hot),
+        .hot_manifest_support_subdir = emittedHotManifestSupportSubdir(b, lib, deps.config.hot),
     };
 }
 
@@ -126,6 +132,8 @@ pub fn initShared(
         .output = lib.getEmittedBin(),
         .dsym = dsymutil,
         .hot_manifest = emittedHotManifest(lib, deps.config.hot),
+        .hot_manifest_support_dir = emittedHotManifestSupportDir(lib, deps.config.hot),
+        .hot_manifest_support_subdir = emittedHotManifestSupportSubdir(b, lib, deps.config.hot),
     };
 }
 
@@ -157,6 +165,8 @@ pub fn initMacOSUniversal(
         // do it on the individual binaries.
         .dsym = null,
         .hot_manifest = null,
+        .hot_manifest_support_dir = null,
+        .hot_manifest_support_subdir = null,
     };
 }
 
@@ -181,4 +191,21 @@ fn emittedHotManifest(lib: *std.Build.Step.Compile, hot: bool) ?std.Build.LazyPa
         @panic("Ghostty hot mode requires a hot-enabled Zig compiler");
     }
     return lib.getEmittedHotManifest();
+}
+
+fn emittedHotManifestSupportDir(lib: *std.Build.Step.Compile, hot: bool) ?std.Build.LazyPath {
+    if (!hot) return null;
+    if (!@hasDecl(std.Build.Step.Compile, "getEmittedHotManifestSupportDir")) {
+        @panic("Ghostty hot mode requires a hot-enabled Zig compiler");
+    }
+    return lib.getEmittedHotManifestSupportDir();
+}
+
+fn emittedHotManifestSupportSubdir(
+    b: *std.Build,
+    lib: *std.Build.Step.Compile,
+    hot: bool,
+) ?[]const u8 {
+    if (!hot) return null;
+    return b.fmt("{s}.hot.json.compile_modules", .{lib.out_filename});
 }

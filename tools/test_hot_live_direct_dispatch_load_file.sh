@@ -73,6 +73,61 @@ bash "$script_dir/test_hot_live_window_health.sh" >/dev/null || fail "live Ghost
 
 target="src/crash/dir.zig"
 symbol="crash.dir.Dir.iterator"
+installed_manifest="$HOT_SAMPLE_REPO_ROOT/zig-out/share/ghostty/GhosttyKit.hot.json"
+
+[[ -f "$installed_manifest" ]] || fail "installed hot manifest is missing: $installed_manifest"
+
+manifest_compile_module_probe="$(
+  python3 - "$installed_manifest" <<'PY'
+import json
+import os
+from pathlib import Path, PurePosixPath
+import sys
+
+manifest_path = Path(sys.argv[1])
+with manifest_path.open("r", encoding="utf-8") as fh:
+    manifest = json.load(fh)
+
+manifest_dir = manifest_path.parent
+cache_backed_count = 0
+escaping_relative_count = 0
+missing_relative_count = 0
+support_roots = set()
+for module in manifest.get("compile_modules", ()):
+    path = module.get("root_source_path", "")
+    if any(marker in path for marker in (
+        "/.zig-cache/",
+        "/.zig-cache-hot/",
+        "/.zig-global-cache/",
+        "/.zig-global-cache-hot/",
+    )):
+        cache_backed_count += 1
+    if not path or os.path.isabs(path):
+        continue
+
+    parts = PurePosixPath(path).parts
+    if ".." in parts:
+        escaping_relative_count += 1
+
+    resolved = manifest_dir.joinpath(*parts)
+    if not resolved.is_file():
+        missing_relative_count += 1
+    if parts:
+        support_roots.add(str(manifest_dir / parts[0]))
+
+print(
+    cache_backed_count,
+    escaping_relative_count,
+    missing_relative_count,
+    ";".join(sorted(support_roots)),
+    sep="\t",
+)
+PY
+)"
+IFS=$'\t' read -r installed_manifest_cache_backed_count installed_manifest_escaping_relative_count installed_manifest_missing_relative_count installed_manifest_support_roots <<<"$manifest_compile_module_probe"
+[[ "$installed_manifest_cache_backed_count" == "0" ]] || fail "installed hot manifest still contains cache-backed compile module roots"
+[[ "$installed_manifest_escaping_relative_count" == "0" ]] || fail "installed hot manifest contains escaping relative compile module roots"
+[[ "$installed_manifest_missing_relative_count" == "0" ]] || fail "installed hot manifest contains unresolved relative compile module roots"
 
 tmpdir="$(mktemp -d)"
 cleanup() {
@@ -106,6 +161,15 @@ dispatch_response="$(
 [[ "$(status_of "$dispatch_response")" == "[\"done\"]" ]] || fail "unexpected direct dispatch status"
 [[ "$(string_field "$dispatch_response" activation-kind)" == "dispatch" ]] || fail "activation-kind was not dispatch"
 [[ "$(int_field "$dispatch_response" generation)" == "$generation_before" ]] || fail "direct dispatch unexpectedly changed generation in response"
+candidate_compile_skipped="$(string_field "$dispatch_response" candidate-compile-skipped)"
+compile_root_deps_total="$(int_field "$dispatch_response" compile-root-deps-total)"
+compile_root_deps_used="$(int_field "$dispatch_response" compile-root-deps-used)"
+compile_modules_total="$(int_field "$dispatch_response" compile-modules-total)"
+compile_modules_used="$(int_field "$dispatch_response" compile-modules-used)"
+[[ "$candidate_compile_skipped" == "true" ]] || fail "candidate compile was not skipped"
+[[ "$compile_root_deps_used" -le "$compile_root_deps_total" ]] || fail "root dep usage exceeded total"
+[[ "$compile_modules_used" -le "$compile_modules_total" ]] || fail "module usage exceeded total"
+[[ "$compile_modules_used" -lt "$compile_modules_total" ]] || fail "direct dispatch did not narrow module usage"
 
 generation_after="$(hot_sample_current_generation)"
 [[ "$generation_after" == "$generation_before" ]] || fail "direct dispatch changed current generation: before=$generation_before after=$generation_after"
@@ -168,3 +232,16 @@ printf 'PASS live direct-dispatch load-file swapped %s without generation churn 
   "$restored_impl_kind" \
   "$generation_after" \
   "$restore_after"
+printf 'PASS live direct-dispatch compile narrowing candidate_compile_skipped=%s root_deps=%s/%s modules=%s/%s\n' \
+  "$candidate_compile_skipped" \
+  "$compile_root_deps_used" \
+  "$compile_root_deps_total" \
+  "$compile_modules_used" \
+  "$compile_modules_total"
+printf 'PASS installed hot manifest support roots resolve from %s (roots=%s cache_backed_compile_modules=%s)\n' \
+  "$installed_manifest" \
+  "${installed_manifest_support_roots:-<none>}" \
+  "$installed_manifest_cache_backed_count"
+printf 'PASS installed hot manifest compile module roots stay within manifest support tree and resolve cleanly (escaping_relative=%s missing_relative=%s)\n' \
+  "$installed_manifest_escaping_relative_count" \
+  "$installed_manifest_missing_relative_count"

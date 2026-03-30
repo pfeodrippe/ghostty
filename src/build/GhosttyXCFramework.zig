@@ -10,6 +10,8 @@ const Target = @import("xcframework.zig").Target;
 xcframework: *XCFrameworkStep,
 target: Target,
 hot_manifest: ?std.Build.LazyPath,
+hot_manifest_support_dir: ?std.Build.LazyPath,
+hot_manifest_support_subdir: ?[]const u8,
 
 pub fn init(
     b: *std.Build,
@@ -93,12 +95,32 @@ pub fn init(
             .universal => null,
             .native => macos_native.hot_manifest,
         },
+        .hot_manifest_support_dir = switch (target) {
+            .universal => null,
+            .native => macos_native.hot_manifest_support_dir,
+        },
+        .hot_manifest_support_subdir = switch (target) {
+            .universal => null,
+            .native => macos_native.hot_manifest_support_subdir,
+        },
     };
 }
 
 pub fn install(self: *const GhosttyXCFramework) void {
     const b = self.xcframework.step.owner;
     self.addStepDependencies(b.getInstallStep());
+    if (self.hot_manifest) |manifest| {
+        const manifest_install = b.addInstallFile(manifest, "share/ghostty/GhosttyKit.hot.json");
+        b.getInstallStep().dependOn(&manifest_install.step);
+    }
+    if (self.hot_manifest_support_dir) |support_dir| {
+        const support_install = b.addInstallDirectory(.{
+            .source_dir = support_dir,
+            .install_dir = .prefix,
+            .install_subdir = b.fmt("share/ghostty/{s}", .{self.hot_manifest_support_subdir.?}),
+        });
+        b.getInstallStep().dependOn(&support_install.step);
+    }
 }
 
 pub fn addStepDependencies(

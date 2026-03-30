@@ -12,6 +12,8 @@ install_step: *std.Build.Step.InstallArtifact,
 
 /// Hot manifest emitted for hot-enabled builds.
 hot_manifest: ?std.Build.LazyPath,
+hot_manifest_support_dir: ?std.Build.LazyPath,
+hot_manifest_support_subdir: ?[]const u8,
 
 pub fn init(b: *std.Build, cfg: *const Config, deps: *const SharedDeps) !Ghostty {
     var root_module_options: std.Build.Module.CreateOptions = .{
@@ -73,6 +75,8 @@ pub fn init(b: *std.Build, cfg: *const Config, deps: *const SharedDeps) !Ghostty
         .exe = exe,
         .install_step = install_step,
         .hot_manifest = emittedHotManifest(exe, cfg.hot),
+        .hot_manifest_support_dir = emittedHotManifestSupportDir(exe, cfg.hot),
+        .hot_manifest_support_subdir = emittedHotManifestSupportSubdir(b, exe, cfg.hot),
     };
 }
 
@@ -130,6 +134,23 @@ fn emittedHotManifest(exe: *std.Build.Step.Compile, hot: bool) ?std.Build.LazyPa
         @panic("Ghostty hot mode requires a hot-enabled Zig compiler");
     }
     return exe.getEmittedHotManifest();
+}
+
+fn emittedHotManifestSupportDir(exe: *std.Build.Step.Compile, hot: bool) ?std.Build.LazyPath {
+    if (!hot) return null;
+    if (!@hasDecl(std.Build.Step.Compile, "getEmittedHotManifestSupportDir")) {
+        @panic("Ghostty hot mode requires a hot-enabled Zig compiler");
+    }
+    return exe.getEmittedHotManifestSupportDir();
+}
+
+fn emittedHotManifestSupportSubdir(
+    b: *std.Build,
+    exe: *std.Build.Step.Compile,
+    hot: bool,
+) ?[]const u8 {
+    if (!hot) return null;
+    return b.fmt("{s}.hot.json.compile_modules", .{exe.out_filename});
 }
 
 /// ANSI escape codes for colored log output
