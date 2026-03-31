@@ -162,11 +162,17 @@ dispatch_response="$(
 [[ "$(string_field "$dispatch_response" activation-kind)" == "dispatch" ]] || fail "activation-kind was not dispatch"
 [[ "$(int_field "$dispatch_response" generation)" == "$generation_before" ]] || fail "direct dispatch unexpectedly changed generation in response"
 candidate_compile_skipped="$(string_field "$dispatch_response" candidate-compile-skipped)"
+selection_kind="$(string_field "$dispatch_response" selection-kind)"
+selection_changed_wrapper_fqns="$(int_field "$dispatch_response" selection-changed-wrapper-fqns)"
+selection_changed_top_level_decls="$(int_field "$dispatch_response" selection-changed-top-level-decls)"
 compile_root_deps_total="$(int_field "$dispatch_response" compile-root-deps-total)"
 compile_root_deps_used="$(int_field "$dispatch_response" compile-root-deps-used)"
 compile_modules_total="$(int_field "$dispatch_response" compile-modules-total)"
 compile_modules_used="$(int_field "$dispatch_response" compile-modules-used)"
 [[ "$candidate_compile_skipped" == "true" ]] || fail "candidate compile was not skipped"
+[[ "$selection_kind" == "graph_manifest_body_hash" ]] || fail "direct dispatch selection fell back to $selection_kind"
+[[ "$selection_changed_wrapper_fqns" -ge 1 ]] || fail "graph selection did not report any changed wrapper fqn"
+[[ "$selection_changed_top_level_decls" -ge 1 ]] || fail "graph selection did not report any changed top-level decl"
 [[ "$compile_root_deps_used" -le "$compile_root_deps_total" ]] || fail "root dep usage exceeded total"
 [[ "$compile_modules_used" -le "$compile_modules_total" ]] || fail "module usage exceeded total"
 [[ "$compile_modules_used" -lt "$compile_modules_total" ]] || fail "direct dispatch did not narrow module usage"
@@ -238,6 +244,10 @@ printf 'PASS live direct-dispatch compile narrowing candidate_compile_skipped=%s
   "$compile_root_deps_total" \
   "$compile_modules_used" \
   "$compile_modules_total"
+printf 'PASS live direct-dispatch selection used %s wrappers=%s top_level_decls=%s\n' \
+  "$selection_kind" \
+  "$selection_changed_wrapper_fqns" \
+  "$selection_changed_top_level_decls"
 printf 'PASS installed hot manifest support roots resolve from %s (roots=%s cache_backed_compile_modules=%s)\n' \
   "$installed_manifest" \
   "${installed_manifest_support_roots:-<none>}" \
