@@ -9,6 +9,7 @@ STOCK_GLOBAL_CACHE_DIR ?= $(abspath $(PROJECT_DIR)/.zig-global-cache-stock)
 HOT_CACHE_DIR ?= $(abspath $(PROJECT_DIR)/.zig-cache-hot)
 HOT_GLOBAL_CACHE_DIR ?= $(abspath $(PROJECT_DIR)/.zig-global-cache-hot)
 HOT_JOBS ?= -j4
+HOT_PRUNE_BUILD_CACHE ?= 1
 HOT_ORPHAN_ROOTS ?= $(HOT_CACHE_DIR) $(notdir $(HOT_CACHE_DIR)) $(HOT_GLOBAL_CACHE_DIR) $(notdir $(HOT_GLOBAL_CACHE_DIR))
 HOT_CACHE_RESOLVER ?= $(abspath $(PROJECT_DIR)/tools/resolve_hot_cache_dirs.py)
 HOT_RUNNER ?= $(abspath $(PROJECT_DIR)/tools/run_in_own_process_group.sh)
@@ -54,6 +55,16 @@ clean:
 		macos/GhosttyKit.xcframework
 .PHONY: clean
 
+hot-prune-generated:
+	rm -rf \
+		$(PROJECT_DIR)/.zig-cache-hot-recover-* \
+		$(PROJECT_DIR)/.zig-hot \
+		/tmp/ghostty-hot-run-app.*
+	@if [ "$(HOT_PRUNE_BUILD_CACHE)" = "1" ]; then \
+		rm -rf "$(HOT_CACHE_DIR)" "$(HOT_GLOBAL_CACHE_DIR)"; \
+	fi
+.PHONY: hot-prune-generated
+
 stock-build:
 	@if [ -d macos/build ]; then xattr -cr macos/build; fi
 	@if [ -d macos/GhosttyKit.xcframework ]; then xattr -cr macos/GhosttyKit.xcframework; fi
@@ -66,7 +77,7 @@ stock-run:
 	$(STOCK_ZIG) build run $(STOCK_FLAGS) --cache-dir $(STOCK_CACHE_DIR) --global-cache-dir $(STOCK_GLOBAL_CACHE_DIR) $(if $(RUN_ARGS),-- $(RUN_ARGS),)
 .PHONY: stock-run
 
-hot-build:
+hot-build: hot-prune-generated
 	@if [ -d macos/build ]; then xattr -cr macos/build; fi
 	@if [ -d macos/GhosttyKit.xcframework ]; then xattr -cr macos/GhosttyKit.xcframework; fi
 	@$(HOT_ORPHAN_KILLER) $(HOT_ORPHAN_ROOTS) >/dev/null 2>&1 || true
@@ -93,7 +104,7 @@ hot-run: hot-build
 		--run-args "$$run_args"
 .PHONY: hot-run
 
-hot-test:
+hot-test: hot-prune-generated
 	@if [ -d macos/build ]; then xattr -cr macos/build; fi
 	@if [ -d macos/GhosttyKit.xcframework ]; then xattr -cr macos/GhosttyKit.xcframework; fi
 	@$(HOT_ORPHAN_KILLER) $(HOT_ORPHAN_ROOTS) >/dev/null 2>&1 || true
