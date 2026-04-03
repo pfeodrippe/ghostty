@@ -1,5 +1,7 @@
 import Cocoa
 
+extension NSImage: @unchecked @retroactive Sendable {}
+
 extension NSImage {
     /// Combine multiple images with the given blend modes. This is useful given a set
     /// of layers to create a final rasterized image.

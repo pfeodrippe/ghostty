@@ -1,3 +1,5 @@
-- [ ] stock
-- [ ] interpreter with subsecond eval
+- [x] stock
+- [ ] interpreter with sub-second eval
+  - [ ] call any function available
+  - [ ] more complex
 - [ ] compilation in the background for hot reloaded structures
