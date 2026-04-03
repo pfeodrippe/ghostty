@@ -1,9 +1,12 @@
 MIN_XCODE_MAJOR ?= 26
 ZIG_SOURCE_DIR := vendor/zig
+ZIG_LIB_DIR := $(abspath $(ZIG_SOURCE_DIR))/lib
 ZIG_BUILD_DIR ?= .zig-toolchain/build
 ZIG_INSTALL_DIR ?= .zig-toolchain/zig-0.15.2
 ZIG_STAGE2 := $(abspath $(ZIG_BUILD_DIR))/zig2
 ZIG := $(abspath $(ZIG_INSTALL_DIR))/bin/zig
+HOT_DYLIB_DIR ?= .zig-toolchain/hot
+HOT_DYLIB := $(abspath $(HOT_DYLIB_DIR))/libzig_hot.dylib
 LLVM_PREFIX ?= $(shell brew --prefix llvm@20 2>/dev/null)
 LLD_PREFIX ?= $(shell brew --prefix lld@20 2>/dev/null)
 ZSTD_PREFIX ?= $(shell brew --prefix zstd 2>/dev/null)
@@ -67,9 +70,34 @@ $(ZIG_STAGE2): check-zig-submodule check-llvm
 $(ZIG): $(ZIG_STAGE2)
 	cmake --build "$(ZIG_BUILD_DIR)" --target install
 
+$(HOT_DYLIB): $(ZIG) \
+		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bencode.zig \
+		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bootstrap.c \
+		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bootstrap_entry.zig \
+		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bundle.zig \
+		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bytecode.zig \
+		$(ZIG_SOURCE_DIR)/lib/compiler/hot/expr.zig \
+		$(ZIG_SOURCE_DIR)/lib/compiler/hot/runtime.zig
+	@mkdir -p "$(HOT_DYLIB_DIR)"
+	ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
+		"$(ZIG)" build-lib \
+		"$(abspath $(ZIG_SOURCE_DIR))/lib/compiler/hot/bootstrap_entry.zig" \
+		"$(abspath $(ZIG_SOURCE_DIR))/lib/compiler/hot/bootstrap.c" \
+		-dynamic -lc \
+		-femit-bin="$(HOT_DYLIB)"
+
 stock-run: $(ZIG)
-	$(ZIG) build run
+	ZIG_LIB_DIR="$(ZIG_LIB_DIR)" "$(ZIG)" build run
 .PHONY: stock-run
+
+hot-run: $(ZIG) $(HOT_DYLIB)
+	pkill -f 'macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty' || true
+	pkill -f '/Users/pfeodrippe/dev/ghostty/.zig-toolchain/zig-0.15.2/bin/zig build run' || true
+	rm -f .nrepl-port
+	GHOSTTY_HOT_DYLIB="$(HOT_DYLIB)" \
+		ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
+		"$(ZIG)" build run
+.PHONY: hot-run
 
 vendor-zig: $(ZIG)
 .PHONY: vendor-zig

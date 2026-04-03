@@ -450,6 +450,7 @@
 				A5B3052E299BEAAA0047F10C /* Frameworks */,
 				A5B3052F299BEAAA0047F10C /* Resources */,
 				819324572F24E74E00A9ED8F /* Copy DockTilePlugin */,
+				F0C1EAB03A11000100AE0001 /* Clear CodeSign Xattrs */,
 			);
 			buildRules = (
 			);
@@ -597,6 +598,25 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		F0C1EAB03A11000100AE0001 /* Clear CodeSign Xattrs */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Clear CodeSign Xattrs";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "xattr -cr \"$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME\" 2>/dev/null || true\n";
+			showEnvVarsInLog = 0;
+		};
 		FC501E0B2F46B410007AE49D /* Run SwiftLint */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;

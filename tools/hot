@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ -n "${ZIG:-}" ]]; then
+  ZIG_BIN="$ZIG"
+elif [[ -x "$ROOT_DIR/.zig-toolchain/zig-0.15.2/bin/zig" ]]; then
+  ZIG_BIN="$ROOT_DIR/.zig-toolchain/zig-0.15.2/bin/zig"
+else
+  echo "error: missing vendored Zig at $ROOT_DIR/.zig-toolchain/zig-0.15.2/bin/zig" >&2
+  exit 1
+fi
+
+ZIG_LIB_DIR="${ZIG_LIB_DIR:-$ROOT_DIR/vendor/zig/lib}"
+
+declare -a hot_args
+hot_args=()
+
+has_port_override=0
+for arg in "$@"; do
+  case "$arg" in
+    --port|--port-file|--port=*|--port-file=*)
+      has_port_override=1
+      ;;
+  esac
+done
+
+if [[ $has_port_override -eq 0 ]]; then
+  hot_args+=(--port-file "$ROOT_DIR/.nrepl-port")
+fi
+
+hot_args+=("$@")
+
+exec env ZIG_LIB_DIR="$ZIG_LIB_DIR" "$ZIG_BIN" hot "${hot_args[@]}"

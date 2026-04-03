@@ -157,6 +157,9 @@ pub fn init(
 
         // Configure how we're launching
         open.setEnvironmentVariable("GHOSTTY_MAC_LAUNCH_SOURCE", "zig_run");
+        if (env.get("GHOSTTY_HOT_DYLIB")) |path| {
+            open.setEnvironmentVariable("DYLD_INSERT_LIBRARIES", path);
+        }
 
         if (b.args) |args| {
             open.addArgs(args);

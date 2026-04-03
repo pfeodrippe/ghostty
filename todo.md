@@ -3,3 +3,5 @@
   - [ ] call any function available
   - [ ] more complex
 - [ ] compilation in the background for hot reloaded structures
+- [ ] add flecs to be aware of all of that
+- [ ] vscode extension
