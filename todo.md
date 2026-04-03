@@ -1,0 +1,3 @@
+- [ ] stock
+- [ ] interpreter with subsecond eval
+- [ ] compilation in the background for hot reloaded structures
