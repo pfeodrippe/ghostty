@@ -1,4 +1,5 @@
 MIN_XCODE_MAJOR ?= 26
+REPO_ROOT := $(abspath .)
 ZIG_SOURCE_DIR := vendor/zig
 ZIG_LIB_DIR := $(abspath $(ZIG_SOURCE_DIR))/lib
 ZIG_BUILD_DIR ?= .zig-toolchain/build
@@ -7,6 +8,15 @@ ZIG_STAGE2 := $(abspath $(ZIG_BUILD_DIR))/zig2
 ZIG := $(abspath $(ZIG_INSTALL_DIR))/bin/zig
 HOT_DYLIB_DIR ?= .zig-toolchain/hot
 HOT_DYLIB := $(abspath $(HOT_DYLIB_DIR))/libzig_hot.dylib
+HOT_GHOSTTY_BIN := $(abspath macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty)
+HOT_GHOSTTY_BIN_REL := macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty
+HOT_LOG := $(REPO_ROOT)/.hot-run.log
+HOT_PID := $(REPO_ROOT)/.hot-run.pid
+HOT_BUILD_RUN_CMD := $(ZIG) build run
+HOT_INSTALL_CMD := cmake --build $(abspath $(ZIG_BUILD_DIR)) --target install
+HOT_INSTALL_CMD_REL := cmake --build $(ZIG_BUILD_DIR) --target install
+HOT_STAGE3_CMD := $(abspath $(ZIG_BUILD_DIR))/zig2 build --prefix $(abspath $(ZIG_INSTALL_DIR)) stage3
+HOT_STAGE3_CHILD_CMD := $(abspath $(ZIG_BUILD_DIR))/zig2 lib $(abspath $(ZIG_SOURCE_DIR))
 LLVM_PREFIX ?= $(shell brew --prefix llvm@20 2>/dev/null)
 LLD_PREFIX ?= $(shell brew --prefix lld@20 2>/dev/null)
 ZSTD_PREFIX ?= $(shell brew --prefix zstd 2>/dev/null)
@@ -62,6 +72,7 @@ $(ZIG_STAGE2): check-zig-submodule check-llvm
 		cmake "$(abspath $(ZIG_SOURCE_DIR))" \
 			-G Ninja \
 			-DCMAKE_BUILD_TYPE=Release \
+			-DZIG_VERSION="0.15.2-dev.0+ghosttyhot" \
 			-DCMAKE_PREFIX_PATH="$(ZIG_CMAKE_PREFIX_PATH)" \
 			-DCMAKE_LIBRARY_PATH="$(ZIG_CMAKE_LIBRARY_PATH)" \
 			-DCMAKE_INSTALL_PREFIX="$(abspath $(ZIG_INSTALL_DIR))"
@@ -74,29 +85,80 @@ $(HOT_DYLIB): $(ZIG) \
 		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bencode.zig \
 		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bootstrap.c \
 		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bootstrap_entry.zig \
+		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bootstrap_objc.m \
 		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bundle.zig \
 		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bytecode.zig \
 		$(ZIG_SOURCE_DIR)/lib/compiler/hot/expr.zig \
+		$(ZIG_SOURCE_DIR)/lib/compiler/hot/handles.zig \
 		$(ZIG_SOURCE_DIR)/lib/compiler/hot/runtime.zig
 	@mkdir -p "$(HOT_DYLIB_DIR)"
 	ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
 		"$(ZIG)" build-lib \
 		"$(abspath $(ZIG_SOURCE_DIR))/lib/compiler/hot/bootstrap_entry.zig" \
 		"$(abspath $(ZIG_SOURCE_DIR))/lib/compiler/hot/bootstrap.c" \
-		-dynamic -lc \
+		"$(abspath $(ZIG_SOURCE_DIR))/lib/compiler/hot/bootstrap_objc.m" \
+		-dynamic -lc -framework AppKit -fallow-shlib-undefined \
 		-femit-bin="$(HOT_DYLIB)"
 
 stock-run: $(ZIG)
 	ZIG_LIB_DIR="$(ZIG_LIB_DIR)" "$(ZIG)" build run
 .PHONY: stock-run
 
-hot-run: $(ZIG) $(HOT_DYLIB)
-	pkill -f 'macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty' || true
-	pkill -f '/Users/pfeodrippe/dev/ghostty/.zig-toolchain/zig-0.15.2/bin/zig build run' || true
-	rm -f .nrepl-port
-	GHOSTTY_HOT_DYLIB="$(HOT_DYLIB)" \
-		ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
-		"$(ZIG)" build run
+hot-stop:
+	@set -eu; \
+	kill_pattern() { \
+		pattern="$$1"; \
+		pkill -TERM -f "$$pattern" 2>/dev/null || true; \
+		for _ in 1 2 3 4 5; do \
+			if ! pgrep -f "$$pattern" >/dev/null 2>&1; then \
+				return 0; \
+			fi; \
+			sleep 1; \
+		done; \
+		pkill -KILL -f "$$pattern" 2>/dev/null || true; \
+	}; \
+	kill_pattern '$(HOT_GHOSTTY_BIN)'; \
+	kill_pattern '$(HOT_GHOSTTY_BIN_REL)'; \
+	kill_pattern '$(HOT_BUILD_RUN_CMD)'; \
+	kill_pattern '$(HOT_INSTALL_CMD)'; \
+	kill_pattern '$(HOT_INSTALL_CMD_REL)'; \
+	kill_pattern '$(HOT_STAGE3_CMD)'; \
+	kill_pattern '$(HOT_STAGE3_CHILD_CMD)'; \
+	if [ -f "$(HOT_PID)" ]; then \
+		pid=$$(cat "$(HOT_PID)" 2>/dev/null || true); \
+		if [ -n "$$pid" ]; then \
+			kill -TERM "$$pid" 2>/dev/null || true; \
+			for _ in 1 2 3 4 5; do \
+				if ! kill -0 "$$pid" >/dev/null 2>&1; then \
+					break; \
+				fi; \
+				sleep 1; \
+			done; \
+			kill -KILL "$$pid" 2>/dev/null || true; \
+		fi; \
+	fi; \
+	rm -f "$(REPO_ROOT)/.nrepl-port" "$(HOT_LOG)" "$(HOT_PID)"
+.PHONY: hot-stop
+
+hot-run: hot-stop
+	$(MAKE) --no-print-directory "$(ZIG)"
+	$(MAKE) --no-print-directory "$(HOT_DYLIB)"
+	@mkdir -p "$(dir $(HOT_LOG))"
+	@bash -lc 'set -euo pipefail; \
+		rm -f "$(HOT_LOG)" "$(HOT_PID)"; \
+		nohup env \
+			GHOSTTY_HOT_DYLIB="$(HOT_DYLIB)" \
+			ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
+			"$(ZIG)" build run >"$(HOT_LOG)" 2>&1 & \
+		run_pid=$$!; \
+		echo "$$run_pid" >"$(HOT_PID)"; \
+		tail -f "$(HOT_LOG)" & \
+		tail_pid=$$!; \
+		wait "$$run_pid"; \
+		status=$$?; \
+		kill "$$tail_pid" 2>/dev/null || true; \
+		wait "$$tail_pid" 2>/dev/null || true; \
+		exit "$$status"'
 .PHONY: hot-run
 
 vendor-zig: $(ZIG)

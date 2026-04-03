@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONFIG_FILE="${GHOSTTY_CONFIG_FILE:-$HOME/Library/Application Support/com.mitchellh.ghostty/config}"
+
+if [[ $# -ne 1 ]]; then
+  echo "usage: $(basename "$0") <light|dark|0|1>" >&2
+  exit 1
+fi
+
+case "$1" in
+  light) scheme=0 ;;
+  dark) scheme=1 ;;
+  0|1) scheme="$1" ;;
+  *)
+    echo "error: expected light, dark, 0, or 1" >&2
+    exit 1
+    ;;
+esac
+
+if [[ -f "$CONFIG_FILE" ]]; then
+  if ! grep -Eiv '^[[:space:]]*#' "$CONFIG_FILE" | grep -Eq '(^|[[:space:]])(theme|window-theme)[[:space:]]*=|light:|dark:'; then
+    echo "warning: $CONFIG_FILE has no light/dark conditional theme settings; this flips Ghostty's color-scheme state but may not visibly change terminal colors" >&2
+  fi
+fi
+
+exec "$ROOT_DIR/tools/hot" call ghostty_app_set_color_scheme @ghostty.app "$scheme"

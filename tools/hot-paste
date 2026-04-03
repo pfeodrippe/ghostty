@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def zig_string_literal(text: str) -> str:
+    pieces: list[str] = ['"']
+    for ch in text:
+        if ch == "\\":
+            pieces.append("\\\\")
+        elif ch == '"':
+            pieces.append('\\"')
+        else:
+            pieces.append(ch)
+    pieces.append('"')
+    return "".join(pieces)
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print(f"usage: {Path(sys.argv[0]).name} <text>", file=sys.stderr)
+        return 1
+
+    root_dir = Path(__file__).resolve().parent.parent
+    hot_bin = root_dir / "tools" / "hot"
+    text = sys.argv[1]
+
+    return subprocess.call(
+        [
+            str(hot_bin),
+            "call",
+            "ghostty_surface_text",
+            "@ghostty.surface",
+            zig_string_literal(text),
+            str(len(text.encode())),
+        ]
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

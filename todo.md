@@ -1,6 +1,6 @@
 - [x] stock
 - [ ] interpreter with sub-second eval
-  - [ ] call any function available
+  - [x] call some function
   - [ ] more complex
 - [ ] compilation in the background for hot reloaded structures
 - [ ] add flecs to be aware of all of that
