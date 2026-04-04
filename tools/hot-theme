@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONFIG_FILE="${GHOSTTY_CONFIG_FILE:-$HOME/Library/Application Support/com.mitchellh.ghostty/config}"
+CONFIG_FILE="${GHOSTTY_CONFIG_FILE:-${GHOSTTY_RUN_CONFIG:-$HOME/Library/Application Support/com.mitchellh.ghostty/config}}"
+SURFACE_HANDLE='@objc:NSApp.activeWindow.contentView//surfaceModel.asObject.surface'
 
 if [[ $# -ne 1 ]]; then
   echo "usage: $(basename "$0") <light|dark|0|1>" >&2
@@ -25,4 +26,4 @@ if [[ -f "$CONFIG_FILE" ]]; then
   fi
 fi
 
-exec "$ROOT_DIR/tools/hot" call ghostty_app_set_color_scheme @ghostty.app "$scheme"
+exec "$ROOT_DIR/tools/hot" eval "ghostty_app_set_color_scheme(ghostty_surface_app($SURFACE_HANDLE), $scheme)"

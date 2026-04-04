@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+SURFACE_HANDLE = "@objc:NSApp.activeWindow.contentView//surfaceModel.asObject.surface"
+
 
 def zig_string_literal(text: str) -> str:
     pieces: list[str] = ['"']
@@ -11,6 +13,12 @@ def zig_string_literal(text: str) -> str:
             pieces.append("\\\\")
         elif ch == '"':
             pieces.append('\\"')
+        elif ch == "\n":
+            pieces.append("\\n")
+        elif ch == "\r":
+            pieces.append("\\r")
+        elif ch == "\t":
+            pieces.append("\\t")
         else:
             pieces.append(ch)
     pieces.append('"')
@@ -31,7 +39,7 @@ def main() -> int:
             str(hot_bin),
             "call",
             "ghostty_surface_text",
-            "@ghostty.surface",
+            SURFACE_HANDLE,
             zig_string_literal(text),
             str(len(text.encode())),
         ]

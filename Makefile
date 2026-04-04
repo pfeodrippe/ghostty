@@ -13,6 +13,7 @@ HOT_GHOSTTY_BIN_REL := macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty
 HOT_LOG := $(REPO_ROOT)/.hot-run.log
 HOT_PID := $(REPO_ROOT)/.hot-run.pid
 HOT_BUILD_RUN_CMD := $(ZIG) build run
+GHOSTTY_RUN_ARGS := -- --config-default-files=false --window-vsync=false
 HOT_INSTALL_CMD := cmake --build $(abspath $(ZIG_BUILD_DIR)) --target install
 HOT_INSTALL_CMD_REL := cmake --build $(ZIG_BUILD_DIR) --target install
 HOT_STAGE3_CMD := $(abspath $(ZIG_BUILD_DIR))/zig2 build --prefix $(abspath $(ZIG_INSTALL_DIR)) stage3
@@ -101,7 +102,7 @@ $(HOT_DYLIB): $(ZIG) \
 		-femit-bin="$(HOT_DYLIB)"
 
 stock-run: $(ZIG)
-	ZIG_LIB_DIR="$(ZIG_LIB_DIR)" "$(ZIG)" build run
+	ZIG_LIB_DIR="$(ZIG_LIB_DIR)" "$(ZIG)" build run $(GHOSTTY_RUN_ARGS)
 .PHONY: stock-run
 
 hot-stop:
@@ -149,7 +150,7 @@ hot-run: hot-stop
 		nohup env \
 			GHOSTTY_HOT_DYLIB="$(HOT_DYLIB)" \
 			ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
-			"$(ZIG)" build run >"$(HOT_LOG)" 2>&1 & \
+			"$(ZIG)" build run $(GHOSTTY_RUN_ARGS) >"$(HOT_LOG)" 2>&1 & \
 		run_pid=$$!; \
 		echo "$$run_pid" >"$(HOT_PID)"; \
 		tail -f "$(HOT_LOG)" & \
