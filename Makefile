@@ -6,15 +6,13 @@ ZIG_BUILD_DIR ?= .zig-toolchain/build
 ZIG_INSTALL_DIR ?= .zig-toolchain/zig-0.15.2
 ZIG_STAGE2 := $(abspath $(ZIG_BUILD_DIR))/zig2
 ZIG := $(abspath $(ZIG_INSTALL_DIR))/bin/zig
-HOT_DYLIB_DIR ?= .zig-toolchain/hot
-HOT_DYLIB := $(abspath $(HOT_DYLIB_DIR))/libzig_hot.dylib
-HOT_CACHE_DIR ?= $(REPO_ROOT)/.zig-hot-thunks
 HOT_GHOSTTY_BIN := $(abspath macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty)
 HOT_GHOSTTY_BIN_REL := macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty
 HOT_LOG := $(REPO_ROOT)/.hot-run.log
 HOT_PID := $(REPO_ROOT)/.hot-run.pid
 HOT_TAIL_CMD := tail -f $(HOT_LOG)
 HOT_BUILD_RUN_CMD := $(ZIG) build run
+HOT_BUILD_RUN_HOT_CMD := $(ZIG) build run -Dhot=true
 GHOSTTY_RUN_ARGS := -- --config-default-files=false --window-vsync=false
 HOT_INSTALL_CMD := cmake --build $(abspath $(ZIG_BUILD_DIR)) --target install
 HOT_INSTALL_CMD_REL := cmake --build $(ZIG_BUILD_DIR) --target install
@@ -85,30 +83,6 @@ $(ZIG_STAGE2): check-zig-submodule check-llvm
 $(ZIG): $(ZIG_STAGE2)
 	cmake --build "$(ZIG_BUILD_DIR)" --target install
 
-$(HOT_DYLIB): $(ZIG) \
-		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bencode.zig \
-		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bootstrap.c \
-		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bootstrap_entry.zig \
-		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bootstrap_objc.m \
-		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bundle.zig \
-		$(ZIG_SOURCE_DIR)/lib/compiler/hot/bytecode.zig \
-		$(ZIG_SOURCE_DIR)/lib/compiler/hot/expr.zig \
-		$(ZIG_SOURCE_DIR)/lib/compiler/hot/fast_c_runtime.zig \
-		$(ZIG_SOURCE_DIR)/lib/compiler/hot/fast_zig_runtime.zig \
-		$(ZIG_SOURCE_DIR)/lib/compiler/hot/handles.zig \
-		$(ZIG_SOURCE_DIR)/lib/compiler/hot/hot_root.zig \
-		$(ZIG_SOURCE_DIR)/lib/compiler/hot/runtime.zig \
-		$(ZIG_SOURCE_DIR)/lib/compiler/hot/typed_thunk.zig
-	@mkdir -p "$(HOT_DYLIB_DIR)"
-	DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$$DYLD_LIBRARY_PATH" \
-		ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
-		"$(ZIG)" build-lib \
-		"$(abspath $(ZIG_SOURCE_DIR))/lib/compiler/hot/bootstrap_entry.zig" \
-		"$(abspath $(ZIG_SOURCE_DIR))/lib/compiler/hot/bootstrap.c" \
-		"$(abspath $(ZIG_SOURCE_DIR))/lib/compiler/hot/bootstrap_objc.m" \
-		-dynamic -lc -framework AppKit -fallow-shlib-undefined \
-		-femit-bin="$(HOT_DYLIB)"
-
 stock-run: $(ZIG)
 	DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$$DYLD_LIBRARY_PATH" \
 		ZIG_LIB_DIR="$(ZIG_LIB_DIR)" "$(ZIG)" build run $(GHOSTTY_RUN_ARGS)
@@ -130,6 +104,7 @@ hot-stop:
 	kill_pattern '$(HOT_GHOSTTY_BIN)'; \
 	kill_pattern '$(HOT_GHOSTTY_BIN_REL)'; \
 	kill_pattern '$(HOT_BUILD_RUN_CMD)'; \
+	kill_pattern '$(HOT_BUILD_RUN_HOT_CMD)'; \
 	kill_pattern '$(HOT_INSTALL_CMD)'; \
 	kill_pattern '$(HOT_INSTALL_CMD_REL)'; \
 	kill_pattern '$(HOT_STAGE3_CMD)'; \
@@ -153,19 +128,13 @@ hot-stop:
 
 hot-run: hot-stop
 	$(MAKE) --no-print-directory "$(ZIG)"
-	$(MAKE) --no-print-directory "$(HOT_DYLIB)"
 	@mkdir -p "$(dir $(HOT_LOG))"
 	@bash -lc 'set -euo pipefail; \
 		rm -f "$(HOT_LOG)" "$(HOT_PID)"; \
 		nohup env \
-			GHOSTTY_HOT_DYLIB="$(HOT_DYLIB)" \
-			ZIG_HOT_MAIN_EXECUTABLE="$(HOT_GHOSTTY_BIN)" \
-			ZIG_HOT_PORT_FILE="$(REPO_ROOT)/.nrepl-port" \
 			DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$${DYLD_LIBRARY_PATH:-}" \
-			ZIG_HOT_ZIG_BIN="$(ZIG)" \
-			ZIG_HOT_CACHE_DIR="$(HOT_CACHE_DIR)" \
 			ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
-			"$(ZIG)" build run $(GHOSTTY_RUN_ARGS) >"$(HOT_LOG)" 2>&1 & \
+			"$(ZIG)" build run -Dhot=true $(GHOSTTY_RUN_ARGS) >"$(HOT_LOG)" 2>&1 & \
 		run_pid=$$!; \
 		echo "$$run_pid" >"$(HOT_PID)"; \
 		tail -f "$(HOT_LOG)" & \

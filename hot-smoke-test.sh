@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOT_BIN="${HOT_BIN:-$ROOT_DIR/tools/hot}"
+ZIG_BIN="${ZIG_BIN:-$ROOT_DIR/.zig-toolchain/zig-0.15.2/bin/zig}"
 PORT_FILE="${PORT_FILE:-$ROOT_DIR/.nrepl-port}"
 HOT_LOG="${HOT_LOG:-$ROOT_DIR/.hot-run.log}"
 GHOSTTY_BIN_PATTERN="${GHOSTTY_BIN_PATTERN:-macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty}"
@@ -10,6 +11,11 @@ SURFACE_HANDLE='@objc:NSApp.activeWindow.contentView//surfaceModel.asObject.surf
 
 if [[ ! -x "$HOT_BIN" ]]; then
   echo "error: missing hot wrapper at $HOT_BIN" >&2
+  exit 1
+fi
+
+if [[ ! -x "$ZIG_BIN" ]]; then
+  echo "error: missing zig binary at $ZIG_BIN" >&2
   exit 1
 fi
 
@@ -58,6 +64,13 @@ wait_for_app_ready() {
 
 hot() {
   "$HOT_BIN" "$@"
+}
+
+zig_hot() {
+  (
+    cd "$ROOT_DIR"
+    "$ZIG_BIN" hot "$@"
+  )
 }
 
 expect_contains() {
@@ -126,16 +139,25 @@ expect_contains "$describe_output" "os.desktop.launchedFromDesktop"
 expect_contains "$describe_output" "os.env.setenv"
 expect_contains "$describe_output" "os.env.unsetenv"
 expect_contains "$describe_output" "simd.codepoint_width.codepointWidth"
+expect_contains "$describe_output" "math.ortho2d"
+expect_contains "$describe_output" "apprt.embedded.Surface.preeditCallback"
 expect_contains "$describe_output" "renderer.cell.isBlockElement"
 expect_contains "$describe_output" "renderer.cell.isCovering"
 expect_contains "$describe_output" "renderer.cell.noMinContrast"
 expect_contains "$describe_output" "ghostty_surface_process_exited"
+
+eval_output="$(zig_hot --eval 'renderer.cell.isBlockElement(9608)' 2>&1)"
+expect_contains "$eval_output" "value: true"
+expect_contains "$eval_output" "status:"
+expect_contains "$eval_output" "  done"
 
 expect_value "os.flatpak.isFlatpak" "false"
 expect_value "os.desktop.launchedFromDesktop" "false"
 expect_value "os.env.setenv" "0" '"GHOSTTY_HOT_SMOKE"' '"1"'
 expect_value "os.env.unsetenv" "0" '"GHOSTTY_HOT_SMOKE"'
 expect_value "simd.codepoint_width.codepointWidth" "1" 65
+expect_call_contains "math.ortho2d" "value: [[2, 0, 0, 0], [0, 2, 0, 0], [0, 0, -1, 0], [-1, -1, 0, 1]]" 0.0 1.0 0.0 1.0
+expect_done "apprt.embedded.Surface.preeditCallback" "$SURFACE_HANDLE" null
 expect_value "renderer.cell.isBlockElement" "true" 9608
 expect_value "renderer.cell.isCovering" "true" 9608
 expect_value "renderer.cell.noMinContrast" "true" 9608

@@ -50,7 +50,6 @@ pub fn init(
 
     const env = try std.process.getEnvMap(b.allocator);
     const app_path = b.fmt("macos/build/{s}/Ghostty.app", .{xc_config});
-
     // Our step to build the Ghostty macOS app.
     const build = build: {
         // External environment variables can mess up xcodebuild, so
@@ -157,9 +156,6 @@ pub fn init(
 
         // Configure how we're launching
         open.setEnvironmentVariable("GHOSTTY_MAC_LAUNCH_SOURCE", "zig_run");
-        if (env.get("GHOSTTY_HOT_DYLIB")) |path| {
-            open.setEnvironmentVariable("DYLD_INSERT_LIBRARIES", path);
-        }
 
         if (b.args) |args| {
             open.addArgs(args);

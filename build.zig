@@ -43,6 +43,11 @@ pub fn build(b: *std.Build) !void {
         "test-filter",
         "Filter for test. Only applies to Zig tests.",
     ) orelse &[0][]const u8{};
+    const hot_enabled = b.option(
+        bool,
+        "hot",
+        "Run with the vendor Zig hot runtime",
+    ) orelse false;
 
     // Ghostty dependencies used by many artifacts.
     const deps = try buildpkg.SharedDeps.init(b, &config);
@@ -235,6 +240,22 @@ pub fn build(b: *std.Build) !void {
                 b.getInstallPath(.prefix, "share/ghostty"),
             );
 
+            if (hot_enabled) {
+                if (config.target.result.os.tag != .macos) {
+                    run_step.dependOn(&b.addFail(
+                        "-Dhot currently supports macOS run targets only",
+                    ).step);
+                    break :run;
+                }
+
+                const hot = try std.Build.Hot.init(b, .{
+                    .name = "ghostty",
+                    .root_module = exe.exe.root_module,
+                    .main_executable = exe.exe.getEmittedBin(),
+                });
+                hot.configureRun(run_cmd);
+            }
+
             run_step.dependOn(&run_cmd.step);
             break :run;
         }
@@ -263,6 +284,25 @@ pub fn build(b: *std.Build) !void {
             );
 
             // Run uses the native macOS app
+            if (hot_enabled) {
+                const hot_xc_config = switch (config.optimize) {
+                    .Debug => "Debug",
+                    .ReleaseSafe,
+                    .ReleaseSmall,
+                    .ReleaseFast,
+                    => "ReleaseLocal",
+                };
+                const hot_executable = b.fmt(
+                    "macos/build/{s}/Ghostty.app/Contents/MacOS/ghostty",
+                    .{hot_xc_config},
+                );
+                const hot = try std.Build.Hot.init(b, .{
+                    .name = "ghostty",
+                    .root_module = exe.exe.root_module,
+                    .main_executable = .{ .cwd_relative = hot_executable },
+                });
+                hot.configureRun(macos_app_native_only.open);
+            }
             run_step.dependOn(&macos_app_native_only.open.step);
 
             // If we have no test filters, install the tests too
