@@ -90,6 +90,16 @@ expect_done() {
   expect_contains "$output" "  done"
 }
 
+expect_call_contains() {
+  local symbol="$1"
+  local needle="$2"
+  shift 2
+
+  local output
+  output="$(hot call "$symbol" "$@" 2>&1)"
+  expect_contains "$output" "$needle"
+}
+
 expect_log_after() {
   local start_line="$1"
   local needle="$2"
@@ -119,6 +129,7 @@ expect_contains "$describe_output" "simd.codepoint_width.codepointWidth"
 expect_contains "$describe_output" "renderer.cell.isBlockElement"
 expect_contains "$describe_output" "renderer.cell.isCovering"
 expect_contains "$describe_output" "renderer.cell.noMinContrast"
+expect_contains "$describe_output" "ghostty_surface_process_exited"
 
 expect_value "os.flatpak.isFlatpak" "false"
 expect_value "os.desktop.launchedFromDesktop" "false"

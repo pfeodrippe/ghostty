@@ -13,6 +13,27 @@ else
 fi
 
 ZIG_LIB_DIR="${ZIG_LIB_DIR:-$ROOT_DIR/vendor/zig/lib}"
+LLVM_PREFIX="${LLVM_PREFIX:-$(brew --prefix llvm@20 2>/dev/null || true)}"
+LLD_PREFIX="${LLD_PREFIX:-$(brew --prefix lld@20 2>/dev/null || true)}"
+ZSTD_PREFIX="${ZSTD_PREFIX:-$(brew --prefix zstd 2>/dev/null || true)}"
+LIBXML2_PREFIX="${LIBXML2_PREFIX:-$(brew --prefix libxml2 2>/dev/null || true)}"
+ZLIB_PREFIX="${ZLIB_PREFIX:-$(brew --prefix zlib 2>/dev/null || true)}"
+
+prepend_lib_dir() {
+  local dir="$1"
+  [[ -n "$dir" && -d "$dir" ]] || return 0
+  if [[ -z "${DYLD_LIBRARY_PATH:-}" ]]; then
+    export DYLD_LIBRARY_PATH="$dir"
+  else
+    export DYLD_LIBRARY_PATH="$dir:$DYLD_LIBRARY_PATH"
+  fi
+}
+
+prepend_lib_dir "$LLVM_PREFIX/lib"
+prepend_lib_dir "$LLD_PREFIX/lib"
+prepend_lib_dir "$ZSTD_PREFIX/lib"
+prepend_lib_dir "$LIBXML2_PREFIX/lib"
+prepend_lib_dir "$ZLIB_PREFIX/lib"
 
 declare -a hot_args
 hot_args=()
@@ -32,4 +53,4 @@ fi
 
 hot_args+=("$@")
 
-exec env ZIG_LIB_DIR="$ZIG_LIB_DIR" "$ZIG_BIN" hot "${hot_args[@]}"
+exec env ZIG_LIB_DIR="$ZIG_LIB_DIR" DYLD_LIBRARY_PATH="${DYLD_LIBRARY_PATH:-}" "$ZIG_BIN" hot "${hot_args[@]}"

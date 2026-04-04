@@ -31,3 +31,5 @@ vgcore.*
 
 .zig-toolchain
 .nrepl-port
+.hot-run*
+.zig-hot*
