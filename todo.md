@@ -1,11 +1,65 @@
 - [x] stock
 - [ ] interpreter with sub-second eval
   - [x] call some function
+  - [x] tools/hot eval 'SOME ARBITRARY ZIG CODE', but for calls for the moment
   - [ ] support more functions
     - [ ] support arbitrary std calls, e.g. `tools/hot call std.math.pow 0 4 2`
       - ofc that are not zig hot basic compiler functions to avoid issues!
-  - [ ] tools/hot eval 'SOME ARBITRARY ZIG CODE', but for calls for the moment
-  - [ ] more complex
+- [ ] hot reload
 - [ ] compilation in the background for hot reloaded structures
 - [ ] add flecs to be aware of all of that
 - [ ] vscode extension
+
+## Old todo
+
+- we shouldn't need nrepl config in the demo, fix the hot compiler, we want normal zig code (just with the ability to swap at runtime using the flecs runtime)
+- flecs runtime
+  - it will help us with query/hot reload
+  - it will help us to understand what a change can affect statically as well
+
+- [x] simple fn example
+- [x] eval form
+- [x] able to import as if we were at the same folder as main.zig
+- [x] fix eval
+- [x] create .nrepl-port and assume 127.0.0.1
+- [x] scenarios test suite
+- [x] `./tools/hot_sample_output_dots_to_bangs.sh status` status time
+- [x] `./tools/hot_sample_output_dots_to_bangs.sh` toggle time
+- [-] when dealing with C bindings, couldn't we just get the pointer so we don't need to deal with linking while hot reloading?
+- [ ] flecs for ...
+- [ ] functions-level hot reloading (even if inside structs) ?
+- [ ] flecs query/search
+  - [x] flecs query language
+  - [x] graph
+  - [x] globals
+  - [ ] check what would be valuable for us
+  - [ ] flecs explorer using flecs debug mode (it starts a server)
+    - [ ] custom localhost explorer where we can use a model to create queries for us
+- [ ] add tigerbeetle simple db functionality
+- [ ] eval speed
+  - [ ] interpreter for simple statements?
+- [ ] projects to test on
+  - [x] https://github.com/ghostty-org/ghostty
+  - [x] https://github.com/tigerbeetle/tigerbeetle
+  - [ ] https://github.com/lightpanda-io/browser
+  - [ ] https://github.com/neurocyte/flow
+  - [ ] https://github.com/oven-sh/bun
+- [ ] vscode extension based on calva
+  - [ ] update it
+- [ ] emacs package based on cider
+- [ ] project ideas
+  - [ ] healthcare policy simulation for ai agents
+- [ ] if we modify the signature in a incompatible way with functions that use, the callees should use the previous version (as it's still valid anyway) until they themselves are hot reloaded to use the new one (this helps us to minimize crashes)
+  - note that for compatible signatues, we should still hot reload automatically (just like we do today)!
+- [ ] for very expensive functions, don't make them hot reloadable
+- [ ] ability to configure what's hot reloaded
+  - [ ] all by default
+  - [ ] include only
+  - [ ] exclude only
+- [ ] release version
+- [ ] RAM state snapshot
+- [ ] program itself tries to improve (with the possibility of the author contributing upstream)
+- [ ] macos app
+- [ ] qwen 3.5 0.8B or 0.5B with autoresearch
+- [ ] nanochat in zig (no dependencies)
+  - https://github.com/karpathy/nanochat
