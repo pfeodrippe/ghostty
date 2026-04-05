@@ -1,10 +1,7 @@
 - [x] stock
-- [ ] interpreter with sub-second eval
+- [x] interpreter with sub-second eval
   - [x] call some function
   - [x] tools/hot eval 'SOME ARBITRARY ZIG CODE', but for calls for the moment
-  - [ ] support more functions
-    - [ ] support arbitrary std calls, e.g. `tools/hot call std.math.pow 0 4 2`
-      - ofc that are not zig hot basic compiler functions to avoid issues!
 - [ ] hot reload
 - [ ] compilation in the background for hot reloaded structures
 - [ ] add flecs to be aware of all of that

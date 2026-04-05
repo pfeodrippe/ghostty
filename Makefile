@@ -6,6 +6,7 @@ ZIG_BUILD_DIR ?= .zig-toolchain/build
 ZIG_INSTALL_DIR ?= .zig-toolchain/zig-0.15.2
 ZIG_STAGE2 := $(abspath $(ZIG_BUILD_DIR))/zig2
 ZIG := $(abspath $(ZIG_INSTALL_DIR))/bin/zig
+ZIG_INSTALL_STAMP := $(abspath $(ZIG_INSTALL_DIR))/.install-stamp
 HOT_LOG := $(REPO_ROOT)/.hot-run.log
 HOT_PID := $(REPO_ROOT)/.hot-run.pid
 TIGERBEETLE_DIR ?= $(abspath vendor/tigerbeetle)
@@ -20,6 +21,21 @@ ZIG_CMAKE_LIBRARY_PATH := $(LLD_PREFIX)/lib;$(LLVM_PREFIX)/lib;$(ZSTD_PREFIX)/li
 ZIG_LDFLAGS := -L$(LLD_PREFIX)/lib -L$(ZSTD_PREFIX)/lib -L$(LIBXML2_PREFIX)/lib -L$(ZLIB_PREFIX)/lib
 ZIG_CPPFLAGS := -I$(LLD_PREFIX)/include -I$(ZSTD_PREFIX)/include -I$(LIBXML2_PREFIX)/include -I$(ZLIB_PREFIX)/include
 ZIG_DYLD_LIBRARY_PATH := $(LLVM_PREFIX)/lib:$(LLD_PREFIX)/lib:$(ZSTD_PREFIX)/lib:$(LIBXML2_PREFIX)/lib:$(ZLIB_PREFIX)/lib
+
+ifneq ($(wildcard $(ZIG_SOURCE_DIR)/CMakeLists.txt),)
+# Make needs explicit edges from the vendored Zig submodule into both the
+# staged compiler build and the installed toolchain contents. `zig2` itself
+# won't rebuild for lib-only edits, but `cmake --build --target install` still
+# needs to run when the final CLI/runtime changes. Build-script-only std changes
+# (such as std.Build.Hot) are consumed directly from ZIG_LIB_DIR during `zig build`
+# and should not force a stage3 reinstall.
+ZIG_BUILD_PREREQS := $(addprefix $(ZIG_SOURCE_DIR)/,$(shell cd "$(ZIG_SOURCE_DIR)" && git ls-files CMakeLists.txt cmake src stage1 stage2))
+ZIG_INSTALL_PREREQS := $(filter-out \
+	$(ZIG_SOURCE_DIR)/lib/std/Build.zig \
+	$(ZIG_SOURCE_DIR)/lib/std/Build/% \
+	$(ZIG_SOURCE_DIR)/lib/std/build_runner.zig, \
+	$(addprefix $(ZIG_SOURCE_DIR)/,$(shell cd "$(ZIG_SOURCE_DIR)" && git ls-files CMakeLists.txt cmake lib src stage1 stage2)))
+endif
 
 init:
 	@echo You probably want to run "zig build" instead.
@@ -57,7 +73,7 @@ check-llvm:
 	exit 1
 .PHONY: check-llvm
 
-$(ZIG_STAGE2): | check-zig-submodule check-llvm
+$(ZIG_STAGE2): $(ZIG_BUILD_PREREQS) | check-zig-submodule check-llvm
 	@mkdir -p "$(ZIG_BUILD_DIR)" "$(ZIG_INSTALL_DIR)"
 	cd "$(ZIG_BUILD_DIR)" && \
 		PATH="$(LLVM_PREFIX)/bin:$$PATH" \
@@ -72,16 +88,15 @@ $(ZIG_STAGE2): | check-zig-submodule check-llvm
 			-DCMAKE_INSTALL_PREFIX="$(abspath $(ZIG_INSTALL_DIR))"
 	cmake --build "$(ZIG_BUILD_DIR)" --target zig2
 
-$(ZIG): $(ZIG_STAGE2)
+$(ZIG_INSTALL_STAMP): $(ZIG_STAGE2) $(ZIG_INSTALL_PREREQS)
 	@echo "Installing patched Zig stage3 toolchain into $(ZIG_INSTALL_DIR) (this can take several minutes after vendor/zig changes)..."
 	cmake --build "$(ZIG_BUILD_DIR)" --target install
+	@touch "$@"
 
-vendor-zig-install: $(ZIG_STAGE2)
-	@echo "Installing patched Zig stage3 toolchain into $(ZIG_INSTALL_DIR) (this can take several minutes after vendor/zig changes)..."
-	cmake --build "$(ZIG_BUILD_DIR)" --target install
+vendor-zig-install: $(ZIG_INSTALL_STAMP)
 .PHONY: vendor-zig-install
 
-stock-run: $(ZIG)
+stock-run: $(ZIG_INSTALL_STAMP)
 	DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$$DYLD_LIBRARY_PATH" \
 		ZIG_LIB_DIR="$(ZIG_LIB_DIR)" "$(ZIG)" build run $(GHOSTTY_RUN_ARGS)
 .PHONY: stock-run
@@ -138,7 +153,7 @@ hot-stop:
 	rm -f "$(REPO_ROOT)/.nrepl-port" "$(HOT_LOG)" "$(HOT_PID)"
 .PHONY: hot-stop
 
-hot-run: hot-stop $(ZIG)
+hot-run: hot-stop $(ZIG_INSTALL_STAMP)
 	@mkdir -p "$(dir $(HOT_LOG))"
 	@bash -lc 'set -euo pipefail; \
 		rm -f "$(HOT_LOG)" "$(HOT_PID)"; \
@@ -157,7 +172,7 @@ hot-run: hot-stop $(ZIG)
 		exit "$$status"'
 .PHONY: hot-run
 
-hot-test: hot-stop $(ZIG)
+hot-test: hot-stop $(ZIG_INSTALL_STAMP)
 	@mkdir -p "$(dir $(HOT_LOG))"
 	@bash -lc 'set -euo pipefail; \
 		rm -f "$(HOT_LOG)" "$(HOT_PID)"; \
@@ -172,7 +187,7 @@ hot-test: hot-stop $(ZIG)
 		./hot-smoke-test.sh'
 .PHONY: hot-test
 
-hot-compiler-test: $(ZIG)
+hot-compiler-test: $(ZIG_INSTALL_STAMP)
 	DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$$DYLD_LIBRARY_PATH" ./hot-compiler-test.sh
 .PHONY: hot-compiler-test
 
