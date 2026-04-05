@@ -122,10 +122,26 @@ validate_decl_graph_semantic_edges() {
   local run_file="$ROOT_DIR/src/font/shaper/run.zig"
   local shape_file="$ROOT_DIR/src/font/shape.zig"
   local termio_file="$ROOT_DIR/src/termio/Termio.zig"
+  local apprt_surface_file="$ROOT_DIR/src/apprt/surface.zig"
+  local iosurface_layer_file="$ROOT_DIR/src/renderer/metal/IOSurfaceLayer.zig"
 
-  if ! awk -F '\t' -v run_file="$run_file" -v shape_file="$shape_file" -v termio_file="$termio_file" '
+  if ! awk -F '\t' \
+    -v run_file="$run_file" \
+    -v shape_file="$shape_file" \
+    -v termio_file="$termio_file" \
+    -v apprt_surface_file="$apprt_surface_file" \
+    -v iosurface_layer_file="$iosurface_layer_file" '
     $1 == "decl-node" && $3 == "function_decl" && $4 == run_file && $5 == "RunIterator.next" {
       next_key = $2
+    }
+    $1 == "decl-node" && $4 == run_file && $5 == "RunIterator.addCodepoint" {
+      add_codepoint_key = $2
+    }
+    $1 == "decl-node" && $4 == run_file && $5 == "RunIterator.indexForCell" {
+      index_for_cell_key = $2
+    }
+    $1 == "decl-node" && $3 == "function_decl" && $4 == run_file && $5 == "comparableStyle" {
+      comparable_style_key = $2
     }
     $1 == "decl-node" && $3 == "container_decl" && $4 == run_file && $5 == "RunIterator" {
       iterator_key = $2
@@ -145,12 +161,48 @@ validate_decl_graph_semantic_edges() {
     $1 == "decl-node" && $3 == "container_decl" && $4 == termio_file && $5 == "ThreadEnterState" {
       thread_enter_state_key = $2
     }
+    $1 == "decl-node" && $3 == "container_decl" && $4 == apprt_surface_file && $5 == "Mailbox" {
+      surface_mailbox_key = $2
+    }
+    $1 == "decl-node" && $3 == "function_decl" && $4 == iosurface_layer_file && $5 == "init" {
+      iosurface_init_key = $2
+    }
+    $1 == "decl-node" && $4 == iosurface_layer_file && $5 == "getSubclass" {
+      get_subclass_key = $2
+    }
+    $1 == "decl-node" && $3 == "var_decl" && $4 == iosurface_layer_file && $5 == "Subclass" {
+      subclass_key = $2
+    }
     $1 == "decl-edge" && $2 == "type_dep" {
       type_dep[$3 SUBSEP $4] = 1
+      next
+    }
+    $1 == "decl-edge" && $2 == "calls" {
+      calls[$3 SUBSEP $4] = 1
+      next
+    }
+    $1 == "decl-edge" && $2 == "reads" {
+      reads[$3 SUBSEP $4] = 1
+      next
+    }
+    $1 == "decl-edge" && $2 == "writes" {
+      writes[$3 SUBSEP $4] = 1
     }
     END {
       if (next_key == "") {
         print "error: missing declaration graph node for RunIterator.next" > "/dev/stderr"
+        exit 1
+      }
+      if (add_codepoint_key == "") {
+        print "error: missing declaration graph node for RunIterator.addCodepoint" > "/dev/stderr"
+        exit 1
+      }
+      if (index_for_cell_key == "") {
+        print "error: missing declaration graph node for RunIterator.indexForCell" > "/dev/stderr"
+        exit 1
+      }
+      if (comparable_style_key == "") {
+        print "error: missing declaration graph node for comparableStyle" > "/dev/stderr"
         exit 1
       }
       if (iterator_key == "") {
@@ -177,6 +229,22 @@ validate_decl_graph_semantic_edges() {
         print "error: missing declaration graph node for ThreadEnterState" > "/dev/stderr"
         exit 1
       }
+      if (surface_mailbox_key == "") {
+        print "error: missing declaration graph node for apprt.surface.Mailbox" > "/dev/stderr"
+        exit 1
+      }
+      if (iosurface_init_key == "") {
+        print "error: missing declaration graph node for IOSurfaceLayer.init" > "/dev/stderr"
+        exit 1
+      }
+      if (get_subclass_key == "") {
+        print "error: missing declaration graph node for getSubclass" > "/dev/stderr"
+        exit 1
+      }
+      if (subclass_key == "") {
+        print "error: missing declaration graph node for Subclass" > "/dev/stderr"
+        exit 1
+      }
       if (!((next_key SUBSEP iterator_key) in type_dep)) {
         print "error: missing declaration graph type_dep edge: RunIterator.next -> RunIterator" > "/dev/stderr"
         exit 1
@@ -189,12 +257,40 @@ validate_decl_graph_semantic_edges() {
         print "error: missing declaration graph type_dep edge: RunIterator -> RunOptions" > "/dev/stderr"
         exit 1
       }
+      if (!((termio_root_key SUBSEP surface_mailbox_key) in type_dep)) {
+        print "error: missing declaration graph type_dep edge: <file-root> -> apprt.surface.Mailbox" > "/dev/stderr"
+        exit 1
+      }
       if (!((termio_root_key SUBSEP derived_config_key) in type_dep)) {
         print "error: missing declaration graph type_dep edge: <file-root> -> DerivedConfig" > "/dev/stderr"
         exit 1
       }
       if (!((termio_root_key SUBSEP thread_enter_state_key) in type_dep)) {
         print "error: missing declaration graph type_dep edge: <file-root> -> ThreadEnterState" > "/dev/stderr"
+        exit 1
+      }
+      if (!((next_key SUBSEP add_codepoint_key) in calls)) {
+        print "error: missing declaration graph calls edge: RunIterator.next -> RunIterator.addCodepoint" > "/dev/stderr"
+        exit 1
+      }
+      if (!((next_key SUBSEP index_for_cell_key) in calls)) {
+        print "error: missing declaration graph calls edge: RunIterator.next -> RunIterator.indexForCell" > "/dev/stderr"
+        exit 1
+      }
+      if (!((next_key SUBSEP comparable_style_key) in calls)) {
+        print "error: missing declaration graph calls edge: RunIterator.next -> comparableStyle" > "/dev/stderr"
+        exit 1
+      }
+      if (!((iosurface_init_key SUBSEP get_subclass_key) in calls)) {
+        print "error: missing declaration graph calls edge: init -> getSubclass" > "/dev/stderr"
+        exit 1
+      }
+      if (!((get_subclass_key SUBSEP subclass_key) in reads)) {
+        print "error: missing declaration graph reads edge: getSubclass -> Subclass" > "/dev/stderr"
+        exit 1
+      }
+      if (!((get_subclass_key SUBSEP subclass_key) in writes)) {
+        print "error: missing declaration graph writes edge: getSubclass -> Subclass" > "/dev/stderr"
         exit 1
       }
     }
