@@ -62,6 +62,30 @@ wait_for_app_ready() {
   exit 1
 }
 
+wait_for_surface_handle() {
+  local deadline=$((SECONDS + 60))
+  local probe_expr="ghostty_surface_process_exited($SURFACE_HANDLE)"
+  local output=""
+
+  while (( SECONDS < deadline )); do
+    output="$(zig_hot --eval "$probe_expr" 2>&1 || true)"
+    if grep -Fq "status:" <<<"$output" &&
+      grep -Fq "  done" <<<"$output" &&
+      ! grep -Fq "err:" <<<"$output" &&
+      ! grep -Fq "  eval-error" <<<"$output"; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "error: timed out waiting for hot surface handle: $SURFACE_HANDLE" >&2
+  echo "$output" >&2
+  if [[ -f "$HOT_LOG" ]]; then
+    tail -n 120 "$HOT_LOG" >&2
+  fi
+  exit 1
+}
+
 validate_decl_graph_config() {
   local config_path="$ROOT_DIR/.zig-cache/hot/ghostty.config"
   if [[ ! -f "$config_path" ]]; then
@@ -96,8 +120,10 @@ validate_decl_graph_config() {
 validate_decl_graph_semantic_edges() {
   local config_path="$ROOT_DIR/.zig-cache/hot/ghostty.config"
   local run_file="$ROOT_DIR/src/font/shaper/run.zig"
+  local shape_file="$ROOT_DIR/src/font/shape.zig"
+  local termio_file="$ROOT_DIR/src/termio/Termio.zig"
 
-  if ! awk -F '\t' -v run_file="$run_file" '
+  if ! awk -F '\t' -v run_file="$run_file" -v shape_file="$shape_file" -v termio_file="$termio_file" '
     $1 == "decl-node" && $3 == "function_decl" && $4 == run_file && $5 == "RunIterator.next" {
       next_key = $2
     }
@@ -106,6 +132,18 @@ validate_decl_graph_semantic_edges() {
     }
     $1 == "decl-node" && $3 == "container_decl" && $4 == run_file && $5 == "TextRun" {
       text_run_key = $2
+    }
+    $1 == "decl-node" && $3 == "container_decl" && $4 == shape_file && $5 == "RunOptions" {
+      run_options_key = $2
+    }
+    $1 == "decl-node" && $3 == "file_root" && $4 == termio_file && $5 == "" {
+      termio_root_key = $2
+    }
+    $1 == "decl-node" && $3 == "container_decl" && $4 == termio_file && $5 == "DerivedConfig" {
+      derived_config_key = $2
+    }
+    $1 == "decl-node" && $3 == "container_decl" && $4 == termio_file && $5 == "ThreadEnterState" {
+      thread_enter_state_key = $2
     }
     $1 == "decl-edge" && $2 == "type_dep" {
       type_dep[$3 SUBSEP $4] = 1
@@ -123,12 +161,40 @@ validate_decl_graph_semantic_edges() {
         print "error: missing declaration graph node for TextRun" > "/dev/stderr"
         exit 1
       }
+      if (run_options_key == "") {
+        print "error: missing declaration graph node for RunOptions" > "/dev/stderr"
+        exit 1
+      }
+      if (termio_root_key == "") {
+        print "error: missing declaration graph file-root node for Termio.zig" > "/dev/stderr"
+        exit 1
+      }
+      if (derived_config_key == "") {
+        print "error: missing declaration graph node for DerivedConfig" > "/dev/stderr"
+        exit 1
+      }
+      if (thread_enter_state_key == "") {
+        print "error: missing declaration graph node for ThreadEnterState" > "/dev/stderr"
+        exit 1
+      }
       if (!((next_key SUBSEP iterator_key) in type_dep)) {
         print "error: missing declaration graph type_dep edge: RunIterator.next -> RunIterator" > "/dev/stderr"
         exit 1
       }
       if (!((next_key SUBSEP text_run_key) in type_dep)) {
         print "error: missing declaration graph type_dep edge: RunIterator.next -> TextRun" > "/dev/stderr"
+        exit 1
+      }
+      if (!((iterator_key SUBSEP run_options_key) in type_dep)) {
+        print "error: missing declaration graph type_dep edge: RunIterator -> RunOptions" > "/dev/stderr"
+        exit 1
+      }
+      if (!((termio_root_key SUBSEP derived_config_key) in type_dep)) {
+        print "error: missing declaration graph type_dep edge: <file-root> -> DerivedConfig" > "/dev/stderr"
+        exit 1
+      }
+      if (!((termio_root_key SUBSEP thread_enter_state_key) in type_dep)) {
+        print "error: missing declaration graph type_dep edge: <file-root> -> ThreadEnterState" > "/dev/stderr"
         exit 1
       }
     }
@@ -289,6 +355,7 @@ expect_value "os.env.setenv" "0" '"GHOSTTY_HOT_SMOKE"' '"1"'
 expect_value "os.env.unsetenv" "0" '"GHOSTTY_HOT_SMOKE"'
 expect_value "simd.codepoint_width.codepointWidth" "1" 65
 expect_call_contains "math.ortho2d" "value: [[2, 0, 0, 0], [0, 2, 0, 0], [0, 0, -1, 0], [-1, -1, 0, 1]]" 0.0 1.0 0.0 1.0
+wait_for_surface_handle
 expect_eval_done "apprt.embedded.Surface.preeditCallback($SURFACE_HANDLE, null)"
 expect_value "renderer.cell.isBlockElement" "true" 9608
 expect_value "renderer.cell.isCovering" "true" 9608

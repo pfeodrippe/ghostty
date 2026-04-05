@@ -149,17 +149,11 @@ hot-stop:
 			printf "%s\n" "$$child"; \
 		done; \
 	}; \
-	stop_pid_file() { \
-		pid_file="$$1"; \
-		if [ ! -f "$$pid_file" ]; then \
+		stop_pids() { \
+		pids="$$1"; \
+		if [ -z "$$pids" ]; then \
 			return 0; \
 		fi; \
-		pid=$$(cat "$$pid_file" 2>/dev/null || true); \
-		if [ -z "$$pid" ]; then \
-			return 0; \
-		fi; \
-		pids="$$(collect_descendants "$$pid" || true)"; \
-		pids="$$pids $$pid"; \
 		for target in $$pids; do \
 			if [ -n "$$target" ]; then \
 				kill -TERM "$$target" 2>/dev/null || true; \
@@ -184,7 +178,35 @@ hot-stop:
 			fi; \
 		done; \
 	}; \
+		stop_pid_file() { \
+		pid_file="$$1"; \
+		if [ ! -f "$$pid_file" ]; then \
+			return 0; \
+		fi; \
+		pid=$$(cat "$$pid_file" 2>/dev/null || true); \
+		if [ -z "$$pid" ]; then \
+			return 0; \
+		fi; \
+		pids="$$(collect_descendants "$$pid" || true)"; \
+		pids="$$pids $$pid"; \
+		stop_pids "$$pids"; \
+	}; \
+		stop_stale_hot_processes() { \
+		hot_cmd="$(REPO_ROOT)/macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty --config-default-files=false --window-vsync=false"; \
+		self_pid=$$$$; \
+		parent_pid=$$PPID; \
+		matched=$$(ps -o pid= -o command= -ax | awk -v hot_cmd="$$hot_cmd" -v self_pid="$$self_pid" -v parent_pid="$$parent_pid" "index(\$$0, hot_cmd) && \$$1 != self_pid && \$$1 != parent_pid { print \$$1 }" | sort -u); \
+		if [ -z "$$matched" ]; then \
+			return 0; \
+		fi; \
+		pids=""; \
+		for target in $$matched; do \
+			pids="$$pids $$(collect_descendants "$$target" || true) $$target"; \
+		done; \
+		stop_pids "$$pids"; \
+	}; \
 	stop_pid_file "$(HOT_PID)"; \
+	stop_stale_hot_processes; \
 	rm -f "$(REPO_ROOT)/.nrepl-port" "$(HOT_LOG)" "$(HOT_PID)"
 .PHONY: hot-stop
 
