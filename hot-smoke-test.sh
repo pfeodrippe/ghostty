@@ -121,6 +121,8 @@ validate_decl_graph_semantic_edges() {
   local config_path="$ROOT_DIR/.zig-cache/hot/ghostty.config"
   local run_file="$ROOT_DIR/src/font/shaper/run.zig"
   local shape_file="$ROOT_DIR/src/font/shape.zig"
+  local coretext_file="$ROOT_DIR/src/font/shaper/coretext.zig"
+  local shared_grid_file="$ROOT_DIR/src/font/SharedGrid.zig"
   local termio_file="$ROOT_DIR/src/termio/Termio.zig"
   local apprt_surface_file="$ROOT_DIR/src/apprt/surface.zig"
   local iosurface_layer_file="$ROOT_DIR/src/renderer/metal/IOSurfaceLayer.zig"
@@ -128,6 +130,8 @@ validate_decl_graph_semantic_edges() {
   if ! awk -F '\t' \
     -v run_file="$run_file" \
     -v shape_file="$shape_file" \
+    -v coretext_file="$coretext_file" \
+    -v shared_grid_file="$shared_grid_file" \
     -v termio_file="$termio_file" \
     -v apprt_surface_file="$apprt_surface_file" \
     -v iosurface_layer_file="$iosurface_layer_file" '
@@ -148,6 +152,15 @@ validate_decl_graph_semantic_edges() {
     }
     $1 == "decl-node" && $3 == "container_decl" && $4 == run_file && $5 == "TextRun" {
       text_run_key = $2
+    }
+    $1 == "decl-node" && $3 == "file_root" && $4 == shared_grid_file && $5 == "" {
+      shared_grid_root_key = $2
+    }
+    $1 == "decl-node" && $3 == "const_decl" && $4 == shape_file && $5 == "Shaper" {
+      shape_shaper_key = $2
+    }
+    $1 == "decl-node" && $3 == "container_decl" && $4 == coretext_file && $5 == "Shaper" {
+      coretext_shaper_key = $2
     }
     $1 == "decl-node" && $3 == "container_decl" && $4 == shape_file && $5 == "RunOptions" {
       run_options_key = $2
@@ -187,6 +200,10 @@ validate_decl_graph_semantic_edges() {
     }
     $1 == "decl-edge" && $2 == "writes" {
       writes[$3 SUBSEP $4] = 1
+      next
+    }
+    $1 == "decl-edge" && $2 == "comptime_dep" {
+      comptime_dep[$3 SUBSEP $4] = 1
     }
     END {
       if (next_key == "") {
@@ -211,6 +228,18 @@ validate_decl_graph_semantic_edges() {
       }
       if (text_run_key == "") {
         print "error: missing declaration graph node for TextRun" > "/dev/stderr"
+        exit 1
+      }
+      if (shared_grid_root_key == "") {
+        print "error: missing declaration graph file-root node for SharedGrid.zig" > "/dev/stderr"
+        exit 1
+      }
+      if (shape_shaper_key == "") {
+        print "error: missing declaration graph node for shape.Shaper" > "/dev/stderr"
+        exit 1
+      }
+      if (coretext_shaper_key == "") {
+        print "error: missing declaration graph node for coretext.Shaper" > "/dev/stderr"
         exit 1
       }
       if (run_options_key == "") {
@@ -253,8 +282,16 @@ validate_decl_graph_semantic_edges() {
         print "error: missing declaration graph type_dep edge: RunIterator.next -> TextRun" > "/dev/stderr"
         exit 1
       }
+      if (!((text_run_key SUBSEP shared_grid_root_key) in type_dep)) {
+        print "error: missing declaration graph type_dep edge: TextRun -> SharedGrid.zig <file-root>" > "/dev/stderr"
+        exit 1
+      }
       if (!((iterator_key SUBSEP run_options_key) in type_dep)) {
         print "error: missing declaration graph type_dep edge: RunIterator -> RunOptions" > "/dev/stderr"
+        exit 1
+      }
+      if (!((shape_shaper_key SUBSEP coretext_shaper_key) in comptime_dep)) {
+        print "error: missing declaration graph comptime_dep edge: shape.Shaper -> coretext.Shaper" > "/dev/stderr"
         exit 1
       }
       if (!((termio_root_key SUBSEP surface_mailbox_key) in type_dep)) {
