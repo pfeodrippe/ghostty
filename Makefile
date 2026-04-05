@@ -8,7 +8,7 @@ ZIG_STAGE2 := $(abspath $(ZIG_BUILD_DIR))/zig2
 ZIG := $(abspath $(ZIG_INSTALL_DIR))/bin/zig
 HOT_LOG := $(REPO_ROOT)/.hot-run.log
 HOT_PID := $(REPO_ROOT)/.hot-run.pid
-TIGERBEETLE_DIR ?= $(abspath ../tigerbeetle)
+TIGERBEETLE_DIR ?= $(abspath vendor/tigerbeetle)
 GHOSTTY_RUN_ARGS := -- --config-default-files=false --window-vsync=false
 LLVM_PREFIX ?= $(shell brew --prefix llvm@20 2>/dev/null)
 LLD_PREFIX ?= $(shell brew --prefix lld@20 2>/dev/null)

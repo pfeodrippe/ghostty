@@ -1,3 +1,7 @@
 [submodule "vendor/zig"]
 	path = vendor/zig
 	url = https://codeberg.org/ziglang/zig.git
+[submodule "vendor/tigerbeetle"]
+	path = vendor/tigerbeetle
+	url = https://github.com/pfeodrippe/tigerbeetle.git
+	branch = zig-hot
