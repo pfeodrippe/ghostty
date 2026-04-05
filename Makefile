@@ -83,7 +83,11 @@ $(ZIG_STAGE2): check-zig-submodule check-llvm
 $(ZIG): $(ZIG_STAGE2)
 	cmake --build "$(ZIG_BUILD_DIR)" --target install
 
-stock-run: $(ZIG)
+vendor-zig-install: $(ZIG_STAGE2)
+	cmake --build "$(ZIG_BUILD_DIR)" --target install
+.PHONY: vendor-zig-install
+
+stock-run: vendor-zig-install
 	DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$$DYLD_LIBRARY_PATH" \
 		ZIG_LIB_DIR="$(ZIG_LIB_DIR)" "$(ZIG)" build run $(GHOSTTY_RUN_ARGS)
 .PHONY: stock-run
@@ -126,8 +130,7 @@ hot-stop:
 	rm -f "$(REPO_ROOT)/.nrepl-port" "$(HOT_LOG)" "$(HOT_PID)"
 .PHONY: hot-stop
 
-hot-run: hot-stop
-	$(MAKE) --no-print-directory "$(ZIG)"
+hot-run: hot-stop vendor-zig-install
 	@mkdir -p "$(dir $(HOT_LOG))"
 	@bash -lc 'set -euo pipefail; \
 		rm -f "$(HOT_LOG)" "$(HOT_PID)"; \
@@ -146,15 +149,12 @@ hot-run: hot-stop
 		exit "$$status"'
 .PHONY: hot-run
 
-hot-compiler-test: $(ZIG)
+hot-compiler-test: vendor-zig-install
 	DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$$DYLD_LIBRARY_PATH" ./hot-compiler-test.sh
 .PHONY: hot-compiler-test
 
-vendor-zig: $(ZIG)
+vendor-zig: vendor-zig-install
 .PHONY: vendor-zig
-
-vendor-zig-install: $(ZIG)
-.PHONY: vendor-zig-install
 
 # glad updates the GLAD loader. To use this, place the generated glad.zip
 # in this directory next to the Makefile, remove vendor/glad and run this target.

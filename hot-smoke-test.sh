@@ -113,6 +113,27 @@ expect_call_contains() {
   expect_contains "$output" "$needle"
 }
 
+expect_eval_contains() {
+  local expr="$1"
+  local needle="$2"
+
+  local output
+  output="$(zig_hot --eval "$expr" 2>&1)"
+  expect_contains "$output" "$needle"
+}
+
+expect_eval_value() {
+  local expr="$1"
+  local expected="$2"
+  expect_eval_contains "$expr" "value: $expected"
+}
+
+expect_eval_done() {
+  local expr="$1"
+  expect_eval_contains "$expr" "status:"
+  expect_eval_contains "$expr" "  done"
+}
+
 expect_log_after() {
   local start_line="$1"
   local needle="$2"
@@ -151,6 +172,11 @@ expect_contains "$eval_output" "value: true"
 expect_contains "$eval_output" "status:"
 expect_contains "$eval_output" "  done"
 
+field_output="$(zig_hot --eval '.{ .columns = 80, .rows = 24 }.columns' 2>&1)"
+expect_contains "$field_output" "value: 80"
+expect_contains "$field_output" "status:"
+expect_contains "$field_output" "  done"
+
 expect_value "os.flatpak.isFlatpak" "false"
 expect_value "os.desktop.launchedFromDesktop" "false"
 expect_value "os.env.setenv" "0" '"GHOSTTY_HOT_SMOKE"' '"1"'
@@ -162,7 +188,6 @@ expect_value "renderer.cell.isBlockElement" "true" 9608
 expect_value "renderer.cell.isCovering" "true" 9608
 expect_value "renderer.cell.noMinContrast" "true" 9608
 expect_value "ghostty_surface_process_exited" "false" "$SURFACE_HANDLE"
-
 ui_marker="GHOSTTY_HOT_UI_VERIFY_${RANDOM}_${RANDOM}"
 ui_paste_text="$(printf 'printf %s\n' "$ui_marker")"
 paste_log_start="$(wc -l < "$HOT_LOG")"
