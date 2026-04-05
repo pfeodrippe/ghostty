@@ -55,6 +55,7 @@ run_test_filter "$ROOT_DIR/vendor/zig/lib/compiler/hot/typed_thunk_test.zig" "st
 run_test_filter "$ROOT_DIR/vendor/zig/lib/compiler/hot/typed_thunk_test.zig" "nested slice parameters"
 run_test_filter "$ROOT_DIR/vendor/zig/lib/compiler/hot/typed_thunk_test.zig" "enum and optional slice parameters"
 run_test_filter "$ROOT_DIR/vendor/zig/lib/compiler/hot/typed_thunk_test.zig" "allocator error-return thunks"
+run_test_filter "$ROOT_DIR/vendor/zig/lib/compiler/hot/bundle.zig" "loadDeclarationGraph"
 run_test_filter "$ROOT_DIR/vendor/zig/lib/compiler/hot/bundle.zig" "source-informed"
 run_test_filter "$ROOT_DIR/vendor/zig/lib/compiler/hot/bundle.zig" "specializes symbol runtime arguments"
 run_test_filter "$ROOT_DIR/vendor/zig/lib/compiler/hot/bundle.zig" "falls back to typed thunk for hidden aggregate returns"

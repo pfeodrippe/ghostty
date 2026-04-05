@@ -62,6 +62,37 @@ wait_for_app_ready() {
   exit 1
 }
 
+validate_decl_graph_config() {
+  local config_path="$ROOT_DIR/.zig-cache/hot/ghostty.config"
+  if [[ ! -f "$config_path" ]]; then
+    echo "error: missing generated hot config at $config_path" >&2
+    exit 1
+  fi
+
+  if ! awk -F '\t' '
+    $1 == "decl-node" { nodes[$2] = 1; next }
+    $1 == "decl-edge" {
+      edge_kind[++edge_count] = $2
+      edge_from[edge_count] = $3
+      edge_to[edge_count] = $4
+    }
+    END {
+      for (i = 1; i <= edge_count; i++) {
+        if (!(edge_from[i] in nodes)) {
+          printf "error: hot decl graph edge kind=%s references missing source node: %s\n", edge_kind[i], edge_from[i] > "/dev/stderr"
+          exit 1
+        }
+        if (!(edge_to[i] in nodes)) {
+          printf "error: hot decl graph edge kind=%s references missing destination node: %s\n", edge_kind[i], edge_to[i] > "/dev/stderr"
+          exit 1
+        }
+      }
+    }
+  ' "$config_path"; then
+    exit 1
+  fi
+}
+
 hot() {
   "$HOT_BIN" "$@"
 }
@@ -90,6 +121,13 @@ expect_value() {
 
   local output
   output="$(hot call "$symbol" "$@" 2>&1)"
+  expect_contains "$output" "status:"
+  expect_contains "$output" "  done"
+  if grep -Fq "err:" <<<"$output" || grep -Fq "  eval-error" <<<"$output"; then
+    echo "error: expected successful hot value call for $symbol" >&2
+    echo "$output" >&2
+    exit 1
+  fi
   expect_contains "$output" "value: $expected"
 }
 
@@ -101,6 +139,11 @@ expect_done() {
   output="$(hot call "$symbol" "$@" 2>&1)"
   expect_contains "$output" "status:"
   expect_contains "$output" "  done"
+  if grep -Fq "err:" <<<"$output" || grep -Fq "  eval-error" <<<"$output"; then
+    echo "error: expected successful hot done call for $symbol" >&2
+    echo "$output" >&2
+    exit 1
+  fi
 }
 
 expect_call_contains() {
@@ -110,6 +153,13 @@ expect_call_contains() {
 
   local output
   output="$(hot call "$symbol" "$@" 2>&1)"
+  expect_contains "$output" "status:"
+  expect_contains "$output" "  done"
+  if grep -Fq "err:" <<<"$output" || grep -Fq "  eval-error" <<<"$output"; then
+    echo "error: expected successful hot call for $symbol" >&2
+    echo "$output" >&2
+    exit 1
+  fi
   expect_contains "$output" "$needle"
 }
 
@@ -119,6 +169,13 @@ expect_eval_contains() {
 
   local output
   output="$(zig_hot --eval "$expr" 2>&1)"
+  expect_contains "$output" "status:"
+  expect_contains "$output" "  done"
+  if grep -Fq "err:" <<<"$output" || grep -Fq "  eval-error" <<<"$output"; then
+    echo "error: expected successful hot eval for: $expr" >&2
+    echo "$output" >&2
+    exit 1
+  fi
   expect_contains "$output" "$needle"
 }
 
@@ -153,6 +210,7 @@ expect_log_after() {
 
 wait_for_port_file
 wait_for_app_ready
+validate_decl_graph_config
 
 describe_output="$(hot describe 2>&1)"
 expect_contains "$describe_output" "os.flatpak.isFlatpak"
@@ -186,11 +244,11 @@ expect_value "os.env.setenv" "0" '"GHOSTTY_HOT_SMOKE"' '"1"'
 expect_value "os.env.unsetenv" "0" '"GHOSTTY_HOT_SMOKE"'
 expect_value "simd.codepoint_width.codepointWidth" "1" 65
 expect_call_contains "math.ortho2d" "value: [[2, 0, 0, 0], [0, 2, 0, 0], [0, 0, -1, 0], [-1, -1, 0, 1]]" 0.0 1.0 0.0 1.0
-expect_done "apprt.embedded.Surface.preeditCallback" "$SURFACE_HANDLE" null
+expect_eval_done "apprt.embedded.Surface.preeditCallback($SURFACE_HANDLE, null)"
 expect_value "renderer.cell.isBlockElement" "true" 9608
 expect_value "renderer.cell.isCovering" "true" 9608
 expect_value "renderer.cell.noMinContrast" "true" 9608
-expect_value "ghostty_surface_process_exited" "false" "$SURFACE_HANDLE"
+expect_eval_value "ghostty_surface_process_exited($SURFACE_HANDLE)" "false"
 ui_marker="GHOSTTY_HOT_UI_VERIFY_${RANDOM}_${RANDOM}"
 ui_paste_text="$(printf 'printf %s\n' "$ui_marker")"
 paste_log_start="$(wc -l < "$HOT_LOG")"
