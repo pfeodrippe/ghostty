@@ -8,6 +8,7 @@ ZIG_STAGE2 := $(abspath $(ZIG_BUILD_DIR))/zig2
 ZIG := $(abspath $(ZIG_INSTALL_DIR))/bin/zig
 HOT_LOG := $(REPO_ROOT)/.hot-run.log
 HOT_PID := $(REPO_ROOT)/.hot-run.pid
+TIGERBEETLE_DIR ?= $(abspath ../tigerbeetle)
 GHOSTTY_RUN_ARGS := -- --config-default-files=false --window-vsync=false
 LLVM_PREFIX ?= $(shell brew --prefix llvm@20 2>/dev/null)
 LLD_PREFIX ?= $(shell brew --prefix lld@20 2>/dev/null)
@@ -56,7 +57,7 @@ check-llvm:
 	exit 1
 .PHONY: check-llvm
 
-$(ZIG_STAGE2): check-zig-submodule check-llvm
+$(ZIG_STAGE2): | check-zig-submodule check-llvm
 	@mkdir -p "$(ZIG_BUILD_DIR)" "$(ZIG_INSTALL_DIR)"
 	cd "$(ZIG_BUILD_DIR)" && \
 		PATH="$(LLVM_PREFIX)/bin:$$PATH" \
@@ -80,14 +81,14 @@ vendor-zig-install: $(ZIG_STAGE2)
 	cmake --build "$(ZIG_BUILD_DIR)" --target install
 .PHONY: vendor-zig-install
 
-stock-run: vendor-zig-install
+stock-run: $(ZIG)
 	DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$$DYLD_LIBRARY_PATH" \
 		ZIG_LIB_DIR="$(ZIG_LIB_DIR)" "$(ZIG)" build run $(GHOSTTY_RUN_ARGS)
 .PHONY: stock-run
 
 hot-stop:
 	@set -eu; \
-	collect_descendants() { \
+		collect_descendants() { \
 		current="$$1"; \
 		children=$$(pgrep -P "$$current" 2>/dev/null || true); \
 		if [ -z "$$children" ]; then \
@@ -137,7 +138,7 @@ hot-stop:
 	rm -f "$(REPO_ROOT)/.nrepl-port" "$(HOT_LOG)" "$(HOT_PID)"
 .PHONY: hot-stop
 
-hot-run: hot-stop vendor-zig-install
+hot-run: hot-stop $(ZIG)
 	@mkdir -p "$(dir $(HOT_LOG))"
 	@bash -lc 'set -euo pipefail; \
 		rm -f "$(HOT_LOG)" "$(HOT_PID)"; \
@@ -156,7 +157,7 @@ hot-run: hot-stop vendor-zig-install
 		exit "$$status"'
 .PHONY: hot-run
 
-hot-test: hot-stop vendor-zig-install
+hot-test: hot-stop $(ZIG)
 	@mkdir -p "$(dir $(HOT_LOG))"
 	@bash -lc 'set -euo pipefail; \
 		rm -f "$(HOT_LOG)" "$(HOT_PID)"; \
@@ -171,9 +172,16 @@ hot-test: hot-stop vendor-zig-install
 		./hot-smoke-test.sh'
 .PHONY: hot-test
 
-hot-compiler-test: vendor-zig-install
+hot-compiler-test: $(ZIG)
 	DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$$DYLD_LIBRARY_PATH" ./hot-compiler-test.sh
 .PHONY: hot-compiler-test
+
+test-hot-all:
+	@set -e; \
+		"$(MAKE)" hot-compiler-test; \
+		"$(MAKE)" hot-test; \
+		"$(MAKE)" -C "$(TIGERBEETLE_DIR)" HOT_ZIG="$(ZIG)" HOT_ZIG_LIB_DIR="$(ZIG_LIB_DIR)" hot-test
+.PHONY: test-hot-all
 
 vendor-zig: vendor-zig-install
 .PHONY: vendor-zig
