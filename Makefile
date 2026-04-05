@@ -6,18 +6,9 @@ ZIG_BUILD_DIR ?= .zig-toolchain/build
 ZIG_INSTALL_DIR ?= .zig-toolchain/zig-0.15.2
 ZIG_STAGE2 := $(abspath $(ZIG_BUILD_DIR))/zig2
 ZIG := $(abspath $(ZIG_INSTALL_DIR))/bin/zig
-HOT_GHOSTTY_BIN := $(abspath macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty)
-HOT_GHOSTTY_BIN_REL := macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty
 HOT_LOG := $(REPO_ROOT)/.hot-run.log
 HOT_PID := $(REPO_ROOT)/.hot-run.pid
-HOT_TAIL_CMD := tail -f $(HOT_LOG)
-HOT_BUILD_RUN_CMD := $(ZIG) build run
-HOT_BUILD_RUN_HOT_CMD := $(ZIG) build run -Dhot=true
 GHOSTTY_RUN_ARGS := -- --config-default-files=false --window-vsync=false
-HOT_INSTALL_CMD := cmake --build $(abspath $(ZIG_BUILD_DIR)) --target install
-HOT_INSTALL_CMD_REL := cmake --build $(ZIG_BUILD_DIR) --target install
-HOT_STAGE3_CMD := $(abspath $(ZIG_BUILD_DIR))/zig2 build --prefix $(abspath $(ZIG_INSTALL_DIR)) stage3
-HOT_STAGE3_CHILD_CMD := $(abspath $(ZIG_BUILD_DIR))/zig2 lib $(abspath $(ZIG_SOURCE_DIR))
 LLVM_PREFIX ?= $(shell brew --prefix llvm@20 2>/dev/null)
 LLD_PREFIX ?= $(shell brew --prefix lld@20 2>/dev/null)
 ZSTD_PREFIX ?= $(shell brew --prefix zstd 2>/dev/null)
@@ -81,9 +72,11 @@ $(ZIG_STAGE2): check-zig-submodule check-llvm
 	cmake --build "$(ZIG_BUILD_DIR)" --target zig2
 
 $(ZIG): $(ZIG_STAGE2)
+	@echo "Installing patched Zig stage3 toolchain into $(ZIG_INSTALL_DIR) (this can take several minutes after vendor/zig changes)..."
 	cmake --build "$(ZIG_BUILD_DIR)" --target install
 
 vendor-zig-install: $(ZIG_STAGE2)
+	@echo "Installing patched Zig stage3 toolchain into $(ZIG_INSTALL_DIR) (this can take several minutes after vendor/zig changes)..."
 	cmake --build "$(ZIG_BUILD_DIR)" --target install
 .PHONY: vendor-zig-install
 
@@ -94,39 +87,53 @@ stock-run: vendor-zig-install
 
 hot-stop:
 	@set -eu; \
-	kill_pattern() { \
-		pattern="$$1"; \
-		pkill -TERM -f "$$pattern" 2>/dev/null || true; \
+	collect_descendants() { \
+		current="$$1"; \
+		children=$$(pgrep -P "$$current" 2>/dev/null || true); \
+		if [ -z "$$children" ]; then \
+			return 0; \
+		fi; \
+		for child in $$children; do \
+			collect_descendants "$$child"; \
+			printf "%s\n" "$$child"; \
+		done; \
+	}; \
+	stop_pid_file() { \
+		pid_file="$$1"; \
+		if [ ! -f "$$pid_file" ]; then \
+			return 0; \
+		fi; \
+		pid=$$(cat "$$pid_file" 2>/dev/null || true); \
+		if [ -z "$$pid" ]; then \
+			return 0; \
+		fi; \
+		pids="$$(collect_descendants "$$pid" || true)"; \
+		pids="$$pids $$pid"; \
+		for target in $$pids; do \
+			if [ -n "$$target" ]; then \
+				kill -TERM "$$target" 2>/dev/null || true; \
+			fi; \
+		done; \
 		for _ in 1 2 3 4 5; do \
-			if ! pgrep -f "$$pattern" >/dev/null 2>&1; then \
+			alive=0; \
+			for target in $$pids; do \
+				if [ -n "$$target" ] && kill -0 "$$target" >/dev/null 2>&1; then \
+					alive=1; \
+					break; \
+				fi; \
+			done; \
+			if [ "$$alive" -eq 0 ]; then \
 				return 0; \
 			fi; \
 			sleep 1; \
 		done; \
-		pkill -KILL -f "$$pattern" 2>/dev/null || true; \
+		for target in $$pids; do \
+			if [ -n "$$target" ]; then \
+				kill -KILL "$$target" 2>/dev/null || true; \
+			fi; \
+		done; \
 	}; \
-	kill_pattern '$(HOT_GHOSTTY_BIN)'; \
-	kill_pattern '$(HOT_GHOSTTY_BIN_REL)'; \
-	kill_pattern '$(HOT_BUILD_RUN_CMD)'; \
-	kill_pattern '$(HOT_BUILD_RUN_HOT_CMD)'; \
-	kill_pattern '$(HOT_INSTALL_CMD)'; \
-	kill_pattern '$(HOT_INSTALL_CMD_REL)'; \
-	kill_pattern '$(HOT_STAGE3_CMD)'; \
-	kill_pattern '$(HOT_STAGE3_CHILD_CMD)'; \
-	kill_pattern '$(HOT_TAIL_CMD)'; \
-	if [ -f "$(HOT_PID)" ]; then \
-		pid=$$(cat "$(HOT_PID)" 2>/dev/null || true); \
-		if [ -n "$$pid" ]; then \
-			kill -TERM "$$pid" 2>/dev/null || true; \
-			for _ in 1 2 3 4 5; do \
-				if ! kill -0 "$$pid" >/dev/null 2>&1; then \
-					break; \
-				fi; \
-				sleep 1; \
-			done; \
-			kill -KILL "$$pid" 2>/dev/null || true; \
-		fi; \
-	fi; \
+	stop_pid_file "$(HOT_PID)"; \
 	rm -f "$(REPO_ROOT)/.nrepl-port" "$(HOT_LOG)" "$(HOT_PID)"
 .PHONY: hot-stop
 
@@ -148,6 +155,21 @@ hot-run: hot-stop vendor-zig-install
 		wait "$$tail_pid" 2>/dev/null || true; \
 		exit "$$status"'
 .PHONY: hot-run
+
+hot-test: hot-stop vendor-zig-install
+	@mkdir -p "$(dir $(HOT_LOG))"
+	@bash -lc 'set -euo pipefail; \
+		rm -f "$(HOT_LOG)" "$(HOT_PID)"; \
+		cleanup() { "$(MAKE)" hot-stop >/dev/null 2>&1 || true; }; \
+		trap cleanup EXIT INT TERM; \
+		nohup env \
+			DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$${DYLD_LIBRARY_PATH:-}" \
+			ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
+			"$(ZIG)" build run -Dhot=true $(GHOSTTY_RUN_ARGS) >"$(HOT_LOG)" 2>&1 & \
+		run_pid=$$!; \
+		echo "$$run_pid" >"$(HOT_PID)"; \
+		./hot-smoke-test.sh'
+.PHONY: hot-test
 
 hot-compiler-test: vendor-zig-install
 	DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$$DYLD_LIBRARY_PATH" ./hot-compiler-test.sh
