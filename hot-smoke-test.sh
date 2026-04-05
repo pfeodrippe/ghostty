@@ -159,6 +159,7 @@ expect_contains "$describe_output" "os.flatpak.isFlatpak"
 expect_contains "$describe_output" "os.desktop.launchedFromDesktop"
 expect_contains "$describe_output" "os.env.setenv"
 expect_contains "$describe_output" "os.env.unsetenv"
+expect_contains "$describe_output" "config.string.parse"
 expect_contains "$describe_output" "simd.codepoint_width.codepointWidth"
 expect_contains "$describe_output" "math.ortho2d"
 expect_contains "$describe_output" "apprt.embedded.Surface.preeditCallback"
@@ -171,6 +172,8 @@ eval_output="$(zig_hot --eval 'renderer.cell.isBlockElement(9608)' 2>&1)"
 expect_contains "$eval_output" "value: true"
 expect_contains "$eval_output" "status:"
 expect_contains "$eval_output" "  done"
+
+expect_eval_contains 'config.string.parse("xxxxx", "a\\nb")' 'value: "a\nb"'
 
 field_output="$(zig_hot --eval '.{ .columns = 80, .rows = 24 }.columns' 2>&1)"
 expect_contains "$field_output" "value: 80"
