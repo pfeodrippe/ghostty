@@ -93,6 +93,50 @@ validate_decl_graph_config() {
   fi
 }
 
+validate_decl_graph_semantic_edges() {
+  local config_path="$ROOT_DIR/.zig-cache/hot/ghostty.config"
+  local run_file="$ROOT_DIR/src/font/shaper/run.zig"
+
+  if ! awk -F '\t' -v run_file="$run_file" '
+    $1 == "decl-node" && $3 == "function_decl" && $4 == run_file && $5 == "RunIterator.next" {
+      next_key = $2
+    }
+    $1 == "decl-node" && $3 == "container_decl" && $4 == run_file && $5 == "RunIterator" {
+      iterator_key = $2
+    }
+    $1 == "decl-node" && $3 == "container_decl" && $4 == run_file && $5 == "TextRun" {
+      text_run_key = $2
+    }
+    $1 == "decl-edge" && $2 == "type_dep" {
+      type_dep[$3 SUBSEP $4] = 1
+    }
+    END {
+      if (next_key == "") {
+        print "error: missing declaration graph node for RunIterator.next" > "/dev/stderr"
+        exit 1
+      }
+      if (iterator_key == "") {
+        print "error: missing declaration graph node for RunIterator" > "/dev/stderr"
+        exit 1
+      }
+      if (text_run_key == "") {
+        print "error: missing declaration graph node for TextRun" > "/dev/stderr"
+        exit 1
+      }
+      if (!((next_key SUBSEP iterator_key) in type_dep)) {
+        print "error: missing declaration graph type_dep edge: RunIterator.next -> RunIterator" > "/dev/stderr"
+        exit 1
+      }
+      if (!((next_key SUBSEP text_run_key) in type_dep)) {
+        print "error: missing declaration graph type_dep edge: RunIterator.next -> TextRun" > "/dev/stderr"
+        exit 1
+      }
+    }
+  ' "$config_path"; then
+    exit 1
+  fi
+}
+
 hot() {
   "$HOT_BIN" "$@"
 }
@@ -211,6 +255,7 @@ expect_log_after() {
 wait_for_port_file
 wait_for_app_ready
 validate_decl_graph_config
+validate_decl_graph_semantic_edges
 
 describe_output="$(hot describe 2>&1)"
 expect_contains "$describe_output" "os.flatpak.isFlatpak"

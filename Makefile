@@ -7,6 +7,7 @@ ZIG_INSTALL_DIR ?= .zig-toolchain/zig-0.15.2
 ZIG_STAGE2 := $(abspath $(ZIG_BUILD_DIR))/zig2
 ZIG := $(abspath $(ZIG_INSTALL_DIR))/bin/zig
 ZIG_INSTALL_STAMP := $(abspath $(ZIG_INSTALL_DIR))/.install-stamp
+ZIG_VERSION_STRING ?= 0.15.2-dev.0+ghosttyhot
 HOT_LOG := $(REPO_ROOT)/.hot-run.log
 HOT_PID := $(REPO_ROOT)/.hot-run.pid
 TIGERBEETLE_DIR ?= $(abspath vendor/tigerbeetle)
@@ -21,6 +22,16 @@ ZIG_CMAKE_LIBRARY_PATH := $(LLD_PREFIX)/lib;$(LLVM_PREFIX)/lib;$(ZSTD_PREFIX)/li
 ZIG_LDFLAGS := -L$(LLD_PREFIX)/lib -L$(ZSTD_PREFIX)/lib -L$(LIBXML2_PREFIX)/lib -L$(ZLIB_PREFIX)/lib
 ZIG_CPPFLAGS := -I$(LLD_PREFIX)/include -I$(ZSTD_PREFIX)/include -I$(LIBXML2_PREFIX)/include -I$(ZLIB_PREFIX)/include
 ZIG_DYLD_LIBRARY_PATH := $(LLVM_PREFIX)/lib:$(LLD_PREFIX)/lib:$(ZSTD_PREFIX)/lib:$(LIBXML2_PREFIX)/lib:$(ZLIB_PREFIX)/lib
+ZIG_SELFHOST_BUILD_ARGS := \
+	--zig-lib-dir "$(ZIG_LIB_DIR)" \
+	"-Dversion-string=$(ZIG_VERSION_STRING)" \
+	"-Dtarget=native" \
+	"-Dcpu=native" \
+	-Denable-llvm \
+	"-Dconfig_h=$(abspath $(ZIG_BUILD_DIR))/config.h" \
+	-Dno-langref \
+	-Doptimize=ReleaseFast \
+	-Dstrip
 
 ifneq ($(wildcard $(ZIG_SOURCE_DIR)/CMakeLists.txt),)
 # Make needs explicit edges from the vendored Zig submodule into both the
@@ -34,7 +45,7 @@ ZIG_INSTALL_PREREQS := $(filter-out \
 	$(ZIG_SOURCE_DIR)/lib/std/Build.zig \
 	$(ZIG_SOURCE_DIR)/lib/std/Build/% \
 	$(ZIG_SOURCE_DIR)/lib/std/build_runner.zig, \
-	$(addprefix $(ZIG_SOURCE_DIR)/,$(shell cd "$(ZIG_SOURCE_DIR)" && git ls-files CMakeLists.txt cmake lib src stage1 stage2)))
+	$(addprefix $(ZIG_SOURCE_DIR)/,$(shell cd "$(ZIG_SOURCE_DIR)" && git ls-files build.zig CMakeLists.txt cmake lib src stage1 stage2)))
 endif
 
 init:
@@ -82,16 +93,40 @@ $(ZIG_STAGE2): $(ZIG_BUILD_PREREQS) | check-zig-submodule check-llvm
 		cmake "$(abspath $(ZIG_SOURCE_DIR))" \
 			-G Ninja \
 			-DCMAKE_BUILD_TYPE=Release \
-			-DZIG_VERSION="0.15.2-dev.0+ghosttyhot" \
+			-DZIG_VERSION="$(ZIG_VERSION_STRING)" \
 			-DCMAKE_PREFIX_PATH="$(ZIG_CMAKE_PREFIX_PATH)" \
 			-DCMAKE_LIBRARY_PATH="$(ZIG_CMAKE_LIBRARY_PATH)" \
 			-DCMAKE_INSTALL_PREFIX="$(abspath $(ZIG_INSTALL_DIR))"
 	cmake --build "$(ZIG_BUILD_DIR)" --target zig2
 
 $(ZIG_INSTALL_STAMP): $(ZIG_STAGE2) $(ZIG_INSTALL_PREREQS)
-	@echo "Installing patched Zig stage3 toolchain into $(ZIG_INSTALL_DIR) (this can take several minutes after vendor/zig changes)..."
-	cmake --build "$(ZIG_BUILD_DIR)" --target install
-	@touch "$@"
+	@set -euo pipefail; \
+		needs_bootstrap=0; \
+		bootstrap_dirs="$(ZIG_SOURCE_DIR)/cmake $(ZIG_SOURCE_DIR)/stage1"; \
+		if [ -d "$(ZIG_SOURCE_DIR)/stage2" ]; then \
+			bootstrap_dirs="$$bootstrap_dirs $(ZIG_SOURCE_DIR)/stage2"; \
+		fi; \
+		if [ ! -x "$(ZIG)" ] || [ ! -f "$@" ] || [ "$(ZIG_STAGE2)" -nt "$@" ]; then \
+			needs_bootstrap=1; \
+		fi; \
+		if [ "$$needs_bootstrap" -eq 0 ] && [ "$(ZIG_SOURCE_DIR)/CMakeLists.txt" -nt "$@" ]; then \
+			needs_bootstrap=1; \
+		fi; \
+		if [ "$$needs_bootstrap" -eq 0 ] && \
+			find $$bootstrap_dirs -type f -newer "$@" -print -quit | grep -q .; then \
+			needs_bootstrap=1; \
+		fi; \
+		if [ "$$needs_bootstrap" -eq 1 ]; then \
+			echo "Installing patched Zig stage3 toolchain into $(ZIG_INSTALL_DIR) via zig2 bootstrap (this can take several minutes after bootstrap changes)..."; \
+			cmake --build "$(ZIG_BUILD_DIR)" --target install; \
+		else \
+			echo "Installing patched Zig stage4 toolchain into $(ZIG_INSTALL_DIR) via self-hosted zig..."; \
+			cd "$(ZIG_SOURCE_DIR)" && \
+				PATH="$(LLVM_PREFIX)/bin:$$PATH" \
+				DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$${DYLD_LIBRARY_PATH:-}" \
+				"$(ZIG)" build --prefix "$(abspath $(ZIG_INSTALL_DIR))" $(ZIG_SELFHOST_BUILD_ARGS); \
+		fi; \
+		touch "$@"
 
 vendor-zig-install: $(ZIG_INSTALL_STAMP)
 .PHONY: vendor-zig-install
