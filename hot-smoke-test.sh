@@ -566,4 +566,13 @@ classify_output="$(zig_hot classify src/os/desktop.zig 2>&1)"
 expect_contains "$classify_output" "body-class="
 expect_contains "$classify_output" "launchedFromDesktop"
 
+# Compile and execute a simple function body via nREPL
+compile_output="$(zig_hot compile-body test/hot/body_fixture.zig answer 2>&1)"
+expect_contains "$compile_output" "value: 42"
+expect_contains "$compile_output" "instructions:"
+
+# Compile and execute a function with a while loop
+loop_output="$(zig_hot compile-body test/hot/body_fixture.zig sumToTen 2>&1)"
+expect_contains "$loop_output" "value: 55"
+
 echo "hot smoke test passed"
