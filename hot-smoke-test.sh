@@ -20,15 +20,25 @@ if [[ ! -x "$ZIG_BIN" ]]; then
 fi
 
 wait_for_port_file() {
-  local deadline=$((SECONDS + 60))
+  local timeout="${PORT_FILE_TIMEOUT:-600}"
+  local deadline=$((SECONDS + timeout))
   while (( SECONDS < deadline )); do
     if [[ -s "$PORT_FILE" ]]; then
       return 0
     fi
+    # Fail fast if the build/app already exited
+    if [[ -f "$HOT_LOG" ]] && grep -Fq "run Ghostty app failure" "$HOT_LOG"; then
+      echo "error: Ghostty app exited before nREPL started" >&2
+      tail -n 80 "$HOT_LOG" >&2
+      exit 1
+    fi
     sleep 1
   done
 
-  echo "error: timed out waiting for $PORT_FILE" >&2
+  echo "error: timed out after ${timeout}s waiting for $PORT_FILE" >&2
+  if [[ -f "$HOT_LOG" ]]; then
+    tail -n 80 "$HOT_LOG" >&2
+  fi
   exit 1
 }
 
@@ -126,6 +136,8 @@ validate_decl_graph_semantic_edges() {
   local termio_file="$ROOT_DIR/src/termio/Termio.zig"
   local apprt_surface_file="$ROOT_DIR/src/apprt/surface.zig"
   local iosurface_layer_file="$ROOT_DIR/src/renderer/metal/IOSurfaceLayer.zig"
+  local shaders_file="$ROOT_DIR/src/renderer/metal/shaders.zig"
+  local pipeline_file="$ROOT_DIR/src/renderer/metal/Pipeline.zig"
 
   if ! awk -F '\t' \
     -v run_file="$run_file" \
@@ -134,7 +146,9 @@ validate_decl_graph_semantic_edges() {
     -v shared_grid_file="$shared_grid_file" \
     -v termio_file="$termio_file" \
     -v apprt_surface_file="$apprt_surface_file" \
-    -v iosurface_layer_file="$iosurface_layer_file" '
+    -v iosurface_layer_file="$iosurface_layer_file" \
+    -v shaders_file="$shaders_file" \
+    -v pipeline_file="$pipeline_file" '
     $1 == "decl-node" && $3 == "function_decl" && $4 == run_file && $5 == "RunIterator.next" {
       next_key = $2
     }
@@ -162,6 +176,9 @@ validate_decl_graph_semantic_edges() {
     $1 == "decl-node" && $3 == "container_decl" && $4 == coretext_file && $5 == "Shaper" {
       coretext_shaper_key = $2
     }
+    $1 == "decl-node" && $3 == "container_decl" && $4 == coretext_file && $5 == "Shaper.RunIteratorHook" {
+      coretext_run_iterator_hook_key = $2
+    }
     $1 == "decl-node" && $3 == "container_decl" && $4 == shape_file && $5 == "RunOptions" {
       run_options_key = $2
     }
@@ -186,8 +203,18 @@ validate_decl_graph_semantic_edges() {
     $1 == "decl-node" && $3 == "var_decl" && $4 == iosurface_layer_file && $5 == "Subclass" {
       subclass_key = $2
     }
+    $1 == "decl-node" && $3 == "const_decl" && $4 == shaders_file && $5 == "PipelineCollection" {
+      pipeline_collection_key = $2
+    }
+    $1 == "decl-node" && $3 == "file_root" && $4 == pipeline_file && $5 == "" {
+      pipeline_root_key = $2
+    }
     $1 == "decl-edge" && $2 == "type_dep" {
       type_dep[$3 SUBSEP $4] = 1
+      next
+    }
+    $1 == "decl-edge" && $2 == "layout_dep" {
+      layout_dep[$3 SUBSEP $4] = 1
       next
     }
     $1 == "decl-edge" && $2 == "calls" {
@@ -204,6 +231,9 @@ validate_decl_graph_semantic_edges() {
     }
     $1 == "decl-edge" && $2 == "comptime_dep" {
       comptime_dep[$3 SUBSEP $4] = 1
+    }
+    $1 == "decl-edge" && $2 == "specializes" {
+      specializes[$3 SUBSEP $4] = 1
     }
     END {
       if (next_key == "") {
@@ -242,6 +272,10 @@ validate_decl_graph_semantic_edges() {
         print "error: missing declaration graph node for coretext.Shaper" > "/dev/stderr"
         exit 1
       }
+      if (coretext_run_iterator_hook_key == "") {
+        print "error: missing declaration graph node for coretext.Shaper.RunIteratorHook" > "/dev/stderr"
+        exit 1
+      }
       if (run_options_key == "") {
         print "error: missing declaration graph node for RunOptions" > "/dev/stderr"
         exit 1
@@ -274,6 +308,14 @@ validate_decl_graph_semantic_edges() {
         print "error: missing declaration graph node for Subclass" > "/dev/stderr"
         exit 1
       }
+      if (pipeline_collection_key == "") {
+        print "error: missing declaration graph node for PipelineCollection" > "/dev/stderr"
+        exit 1
+      }
+      if (pipeline_root_key == "") {
+        print "error: missing declaration graph file-root node for metal/Pipeline.zig" > "/dev/stderr"
+        exit 1
+      }
       if (!((next_key SUBSEP iterator_key) in type_dep)) {
         print "error: missing declaration graph type_dep edge: RunIterator.next -> RunIterator" > "/dev/stderr"
         exit 1
@@ -290,6 +332,10 @@ validate_decl_graph_semantic_edges() {
         print "error: missing declaration graph type_dep edge: RunIterator -> RunOptions" > "/dev/stderr"
         exit 1
       }
+      if (!((iterator_key SUBSEP coretext_run_iterator_hook_key) in type_dep)) {
+        print "error: missing declaration graph type_dep edge: RunIterator -> coretext.Shaper.RunIteratorHook" > "/dev/stderr"
+        exit 1
+      }
       if (!((shape_shaper_key SUBSEP coretext_shaper_key) in comptime_dep)) {
         print "error: missing declaration graph comptime_dep edge: shape.Shaper -> coretext.Shaper" > "/dev/stderr"
         exit 1
@@ -304,6 +350,10 @@ validate_decl_graph_semantic_edges() {
       }
       if (!((termio_root_key SUBSEP thread_enter_state_key) in type_dep)) {
         print "error: missing declaration graph type_dep edge: <file-root> -> ThreadEnterState" > "/dev/stderr"
+        exit 1
+      }
+      if (!((pipeline_collection_key SUBSEP pipeline_root_key) in layout_dep)) {
+        print "error: missing declaration graph layout_dep edge: PipelineCollection -> metal/Pipeline.zig <file-root>" > "/dev/stderr"
         exit 1
       }
       if (!((next_key SUBSEP add_codepoint_key) in calls)) {
@@ -328,6 +378,10 @@ validate_decl_graph_semantic_edges() {
       }
       if (!((get_subclass_key SUBSEP subclass_key) in writes)) {
         print "error: missing declaration graph writes edge: getSubclass -> Subclass" > "/dev/stderr"
+        exit 1
+      }
+      if (!((next_key SUBSEP add_codepoint_key) in specializes)) {
+        print "error: missing declaration graph specializes edge: RunIterator.next -> RunIterator.addCodepoint" > "/dev/stderr"
         exit 1
       }
     }

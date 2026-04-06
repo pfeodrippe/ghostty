@@ -192,10 +192,11 @@ hot-stop:
 		stop_pids "$$pids"; \
 	}; \
 		stop_stale_hot_processes() { \
-		hot_cmd="$(REPO_ROOT)/macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty --config-default-files=false --window-vsync=false"; \
+		hot_cmd_abs="$(REPO_ROOT)/macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty --config-default-files=false --window-vsync=false"; \
+		hot_cmd_rel="macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty --config-default-files=false --window-vsync=false"; \
 		self_pid=$$$$; \
 		parent_pid=$$PPID; \
-		matched=$$(ps -o pid= -o command= -ax | awk -v hot_cmd="$$hot_cmd" -v self_pid="$$self_pid" -v parent_pid="$$parent_pid" "index(\$$0, hot_cmd) && \$$1 != self_pid && \$$1 != parent_pid { print \$$1 }" | sort -u); \
+		matched=$$(ps -o pid= -o command= -ax | awk -v hot_cmd_abs="$$hot_cmd_abs" -v hot_cmd_rel="$$hot_cmd_rel" -v self_pid="$$self_pid" -v parent_pid="$$parent_pid" "(index(\$$0, hot_cmd_abs) || index(\$$0, hot_cmd_rel)) && \$$1 != self_pid && \$$1 != parent_pid { print \$$1 }" | sort -u); \
 		if [ -z "$$matched" ]; then \
 			return 0; \
 		fi; \
@@ -249,10 +250,14 @@ hot-compiler-test: $(ZIG_INSTALL_STAMP)
 .PHONY: hot-compiler-test
 
 test-hot-all:
-	@set -e; \
+	@bash -lc 'set -euo pipefail; \
+		log="/tmp/ghostty-test-hot-all.log"; \
+		rm -f "$$log"; \
+		exec > >(tee "$$log") 2>&1; \
+		echo "log\t$$log"; \
 		"$(MAKE)" hot-compiler-test; \
 		"$(MAKE)" hot-test; \
-		"$(MAKE)" -C "$(TIGERBEETLE_DIR)" HOT_ZIG="$(ZIG)" HOT_ZIG_LIB_DIR="$(ZIG_LIB_DIR)" hot-test
+		"$(MAKE)" -C "$(TIGERBEETLE_DIR)" HOT_ZIG="$(ZIG)" HOT_ZIG_LIB_DIR="$(ZIG_LIB_DIR)" hot-test'
 .PHONY: test-hot-all
 
 vendor-zig: vendor-zig-install
