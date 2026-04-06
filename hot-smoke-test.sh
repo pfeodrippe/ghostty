@@ -561,4 +561,9 @@ if ! pgrep -f "$GHOSTTY_BIN_PATTERN" >/dev/null 2>&1; then
   exit 1
 fi
 
+# Classify a known source file via nREPL
+classify_output="$(zig_hot classify src/os/desktop.zig 2>&1)"
+expect_contains "$classify_output" "body-class="
+expect_contains "$classify_output" "launchedFromDesktop"
+
 echo "hot smoke test passed"
