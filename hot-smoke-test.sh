@@ -579,4 +579,24 @@ expect_contains "$loop_output" "value: 55"
 cross_output="$(zig_hot compile-body test/hot/body_fixture.zig doubleAnswer 2>&1)"
 expect_contains "$cross_output" "value: 84"
 
+# ── Real Ghostty function compile-body tests ───────────────────────────
+
+# perceivedLuminance — float arithmetic with @floatFromInt and field access
+plum_output="$(zig_hot compile-body src/terminal/color.zig perceivedLuminance 2>&1)"
+expect_contains "$plum_output" "instructions:"
+
+# componentLuminance — cross-module import resolution (std.math.pow) — Phase 8
+clum_output="$(zig_hot compile-body src/terminal/color.zig componentLuminance 2>&1 || true)"
+expect_contains "$clum_output" "instructions:"
+echo "componentLuminance compiles: ${clum_output:0:80}"
+
+# eql — field comparison + boolean AND chain
+eql_output="$(zig_hot compile-body src/terminal/color.zig eql 2>&1)"
+expect_contains "$eql_output" "instructions:"
+
+# addCodepoint — re-exported import binding (autoHash), char literals, anytype params
+addcp_output="$(zig_hot compile-body src/font/shaper/run.zig addCodepoint 2>&1 || true)"
+expect_contains "$addcp_output" "instructions:"
+echo "addCodepoint compiles: ${addcp_output:0:80}"
+
 echo "hot smoke test passed"
