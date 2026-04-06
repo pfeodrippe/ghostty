@@ -575,4 +575,8 @@ expect_contains "$compile_output" "instructions:"
 loop_output="$(zig_hot compile-body test/hot/body_fixture.zig sumToTen 2>&1)"
 expect_contains "$loop_output" "value: 55"
 
+# Compile and execute a function with cross-function calls
+cross_output="$(zig_hot compile-body test/hot/body_fixture.zig doubleAnswer 2>&1)"
+expect_contains "$cross_output" "value: 84"
+
 echo "hot smoke test passed"

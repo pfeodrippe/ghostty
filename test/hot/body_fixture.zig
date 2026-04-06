@@ -18,3 +18,11 @@ fn sumToTen() i64 {
     }
     return total;
 }
+
+fn double(x: i64) i64 {
+    return x * 2;
+}
+
+fn doubleAnswer() i64 {
+    return double(answer());
+}
