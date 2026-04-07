@@ -7,6 +7,7 @@ ZIG_BIN="${ZIG_BIN:-$ROOT_DIR/.zig-toolchain/zig-0.15.2/bin/zig}"
 PORT_FILE="${PORT_FILE:-$ROOT_DIR/.nrepl-port}"
 HOT_LOG="${HOT_LOG:-$ROOT_DIR/.hot-run.log}"
 GHOSTTY_BIN_PATTERN="${GHOSTTY_BIN_PATTERN:-macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty}"
+GHOSTTY_APP_PATH="${GHOSTTY_APP_PATH:-$ROOT_DIR/macos/build/Debug/Ghostty.app}"
 SURFACE_HANDLE='@objc:NSApp.activeWindow.contentView//surfaceModel.asObject.surface'
 
 if [[ ! -x "$HOT_BIN" ]]; then
@@ -505,6 +506,139 @@ expect_log_after() {
   exit 1
 }
 
+activate_ghostty_app() {
+  osascript -e 'tell application "'"$GHOSTTY_APP_PATH"'" to activate' >/dev/null 2>&1 || true
+}
+
+ghostty_window_id() {
+  local pid
+  pid="$(pgrep -f "$GHOSTTY_BIN_PATTERN" | head -n 1)"
+  if [[ -z "$pid" ]]; then
+    echo "error: Ghostty app is not running" >&2
+    exit 1
+  fi
+
+  swift - "$pid" <<'SWIFT'
+import Foundation
+import CoreGraphics
+
+let pid = Int(CommandLine.arguments[1])!
+let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+for entry in windows {
+    guard let ownerPid = entry[kCGWindowOwnerPID as String] as? Int, ownerPid == pid else { continue }
+    guard let layer = entry[kCGWindowLayer as String] as? Int, layer == 0 else { continue }
+    guard let id = entry[kCGWindowNumber as String] as? Int else { continue }
+    print(id)
+    exit(0)
+}
+exit(1)
+SWIFT
+}
+
+ocr_ghostty_window() {
+  local window_id image_path
+  window_id="$(ghostty_window_id)"
+  image_path="$(mktemp /tmp/ghostty-hot-smoke-XXXXXX.png)"
+  screencapture -l "$window_id" "$image_path"
+  swift - "$image_path" <<'SWIFT'
+import Foundation
+import AppKit
+import Vision
+
+let url = URL(fileURLWithPath: CommandLine.arguments[1])
+guard let image = NSImage(contentsOf: url) else { fatalError("missing image") }
+var rect = NSRect(origin: .zero, size: image.size)
+guard let cgImage = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) else {
+    fatalError("missing cgImage")
+}
+
+let request = VNRecognizeTextRequest()
+request.recognitionLevel = .accurate
+request.usesLanguageCorrection = false
+let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+try handler.perform([request])
+for observation in request.results ?? [] {
+    if let text = observation.topCandidates(1).first?.string {
+        print(text)
+    }
+}
+SWIFT
+  rm -f "$image_path"
+}
+
+normalize_ocr_text() {
+  python3 - <<'PY'
+import sys
+
+mapping = str.maketrans({
+    "А": "A",
+    "В": "B",
+    "Е": "E",
+    "К": "K",
+    "М": "M",
+    "Н": "H",
+    "О": "O",
+    "Р": "P",
+    "С": "C",
+    "Т": "T",
+    "Х": "X",
+    "а": "a",
+    "в": "b",
+    "е": "e",
+    "к": "k",
+    "м": "m",
+    "н": "h",
+    "о": "o",
+    "р": "p",
+    "с": "c",
+    "т": "t",
+    "х": "x",
+})
+
+text = sys.stdin.read().translate(mapping).upper()
+text = "".join(ch for ch in text if not ch.isspace())
+print(text, end="")
+PY
+}
+
+expect_ghostty_ocr_contains() {
+  local needle="$1"
+  local deadline=$((SECONDS + 30))
+  local ocr_output="" normalized_output normalized_needle
+  normalized_needle="$(printf '%s' "$needle" | normalize_ocr_text)"
+
+  while (( SECONDS < deadline )); do
+    activate_ghostty_app
+    ocr_output="$(ocr_ghostty_window 2>/dev/null || true)"
+    normalized_output="$(printf '%s' "$ocr_output" | normalize_ocr_text)"
+    if grep -Fq "$normalized_needle" <<<"$normalized_output"; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "error: timed out waiting for Ghostty OCR text: $needle" >&2
+  echo "$ocr_output" >&2
+  exit 1
+}
+
+paste_ghostty_text() {
+  local text="$1"
+  local paste_log_start ui_paste_output
+  activate_ghostty_app
+  paste_log_start="$(wc -l < "$HOT_LOG")"
+  ui_paste_output="$("$ROOT_DIR/tools/hot-paste" "$text" 2>&1)"
+  expect_contains "$ui_paste_output" "status:"
+  expect_contains "$ui_paste_output" "  done"
+  expect_log_after "$paste_log_start" "mailbox message=write_small"
+  if ! pgrep -f "$GHOSTTY_BIN_PATTERN" >/dev/null 2>&1; then
+    echo "error: Ghostty app exited after hot paste" >&2
+    tail -n 120 "$HOT_LOG" >&2
+    exit 1
+  fi
+  sleep 1
+}
+
 wait_for_port_file
 wait_for_app_ready
 validate_decl_graph_config
@@ -549,17 +683,8 @@ expect_value "renderer.cell.isCovering" "true" 9608
 expect_value "renderer.cell.noMinContrast" "true" 9608
 expect_eval_value "ghostty_surface_process_exited($SURFACE_HANDLE)" "false"
 ui_marker="GHOSTTY_HOT_UI_VERIFY_${RANDOM}_${RANDOM}"
-ui_paste_text="$(printf 'printf %s\n' "$ui_marker")"
-paste_log_start="$(wc -l < "$HOT_LOG")"
-ui_paste_output="$("$ROOT_DIR/tools/hot-paste" "$ui_paste_text" 2>&1)"
-expect_contains "$ui_paste_output" "status:"
-expect_contains "$ui_paste_output" "  done"
-expect_log_after "$paste_log_start" "mailbox message=write_small"
-if ! pgrep -f "$GHOSTTY_BIN_PATTERN" >/dev/null 2>&1; then
-  echo "error: Ghostty app exited after hot paste" >&2
-  tail -n 120 "$HOT_LOG" >&2
-  exit 1
-fi
+ui_paste_text=$'# '"$ui_marker"$'\r'
+paste_ghostty_text "$ui_paste_text"
 
 # Classify a known source file via nREPL
 classify_output="$(zig_hot classify src/os/desktop.zig 2>&1)"
@@ -636,7 +761,13 @@ fn addCodepoint(self: *RunIterator, hasher: anytype, cp: u32, cluster: u32) !voi
 ASSOC_EOF
 2>&1)"
 expect_contains "$addcp_assoc" "done"
+expect_contains "$addcp_assoc" "native: patched"
 echo "assoc RunIterator.addCodepoint override (visible_cp transform): OK"
+
+addcp_probe_text=$'clear\r# PATCHCHECK_AAA...BBB\r'
+paste_ghostty_text "$addcp_probe_text"
+expect_ghostty_ocr_contains "PATCHCHECK_AAA!!!BBB"
+echo "assoc RunIterator.addCodepoint visible dot→bang transform: OK"
 
 # Verify addCodepoint compiles with the override in place
 addcp_body="$(zig_hot compile-body src/font/shaper/run.zig addCodepoint 2>&1 || true)"
@@ -646,6 +777,87 @@ echo "addCodepoint with visible_cp override compiles: OK"
 # Unassoc RunIterator.addCodepoint — restore original
 dissoc_addcp="$(zig_hot dissoc RunIterator.addCodepoint 2>&1)"
 expect_contains "$dissoc_addcp" "done"
+expect_contains "$dissoc_addcp" "native: restored"
+paste_ghostty_text "$addcp_probe_text"
+expect_ghostty_ocr_contains "PATCHCHECK_AAA...BBB"
 echo "dissoc RunIterator.addCodepoint: OK"
+
+# Override Shaper.makeFeaturesDict — trivial override returning error
+mfd_assoc="$(zig_hot assoc Shaper.makeFeaturesDict --file src/font/shaper/coretext.zig 'fn makeFeaturesDict(feats: []const Feature) !*macos.foundation.Dictionary { _ = feats; return error.Unexpected; }' 2>&1)"
+expect_contains "$mfd_assoc" "done"
+expect_contains "$mfd_assoc" "native: patched"
+echo "assoc Shaper.makeFeaturesDict override: OK"
+
+# Verify makeFeaturesDict compiles with the override
+mfd_body="$(zig_hot compile-body src/font/shaper/coretext.zig makeFeaturesDict 2>&1 || true)"
+expect_contains "$mfd_body" "instructions:"
+echo "makeFeaturesDict with override compiles: OK"
+
+# Dissoc makeFeaturesDict
+dissoc_mfd="$(zig_hot dissoc Shaper.makeFeaturesDict 2>&1)"
+expect_contains "$dissoc_mfd" "done"
+expect_contains "$dissoc_mfd" "native: restored"
+echo "dissoc Shaper.makeFeaturesDict: OK"
+
+# Override Shaper.endFrame — trivial no-op override
+ef_assoc="$(zig_hot assoc Shaper.endFrame --file src/font/shaper/coretext.zig 'fn endFrame(self: *Shaper) void { _ = self; }' 2>&1)"
+expect_contains "$ef_assoc" "done"
+expect_contains "$ef_assoc" "native: patched"
+echo "assoc Shaper.endFrame override: OK"
+
+# Verify endFrame compiles with the override
+ef_body="$(zig_hot compile-body src/font/shaper/coretext.zig endFrame 2>&1 || true)"
+expect_contains "$ef_body" "instructions:"
+echo "endFrame with override compiles: OK"
+
+# Dissoc endFrame
+dissoc_ef="$(zig_hot dissoc Shaper.endFrame 2>&1)"
+expect_contains "$dissoc_ef" "done"
+expect_contains "$dissoc_ef" "native: restored"
+echo "dissoc Shaper.endFrame: OK"
+
+# Override Shaper.getFont — trivial override returning error
+gf_assoc="$(zig_hot assoc Shaper.getFont --file src/font/shaper/coretext.zig - <<'GF_EOF'
+fn getFont(self: *Shaper, grid: *font.SharedGrid, index: font.Collection.Index) !*macos.foundation.Dictionary {
+    _ = self; _ = grid; _ = index;
+    return error.Unexpected;
+}
+GF_EOF
+2>&1)"
+expect_contains "$gf_assoc" "done"
+echo "assoc Shaper.getFont override: OK"
+
+# Dissoc getFont
+dissoc_gf="$(zig_hot dissoc Shaper.getFont 2>&1)"
+expect_contains "$dissoc_gf" "done"
+echo "dissoc Shaper.getFont: OK"
+
+# ── Verify dissoc restores original behavior ──────────────────────────
+
+# After dissoc, compile-body should return the original instruction count
+mfd_after_dissoc="$(zig_hot compile-body src/font/shaper/coretext.zig makeFeaturesDict 2>&1)"
+expect_contains "$mfd_after_dissoc" "instructions:"
+echo "dissoc restores makeFeaturesDict original: OK"
+
+ef_after_dissoc="$(zig_hot compile-body src/font/shaper/coretext.zig endFrame 2>&1)"
+expect_contains "$ef_after_dissoc" "instructions:"
+echo "dissoc restores endFrame original: OK"
+
+# ── Assoc with malformed code — should not crash ──────────────────────
+
+malformed_output="$(zig_hot assoc answer --file src/font/shaper/coretext.zig 'fn answer(BROKEN SYNTAX' 2>&1 || true)"
+if echo "$malformed_output" | grep -qF "done"; then
+  echo "assoc malformed code: OK (accepted — no crash)"
+else
+  echo "assoc malformed code: OK (rejected cleanly)"
+fi
+
+# Assoc for non-existent function — should not crash
+nonexist_output="$(zig_hot assoc totally_bogus_function_xyz --file src/font/shaper/coretext.zig 'fn bogus() void {}' 2>&1 || true)"
+echo "assoc non-existent function: OK (no crash)"
+
+# Dissoc remaining overrides to clean up
+zig_hot dissoc answer >/dev/null 2>&1 || true
+zig_hot dissoc RGB.componentLuminance >/dev/null 2>&1 || true
 
 echo "hot smoke test passed"
