@@ -590,6 +590,11 @@ clum_output="$(zig_hot compile-body src/terminal/color.zig componentLuminance 2>
 expect_contains "$clum_output" "instructions:"
 echo "componentLuminance compiles: ${clum_output:0:80}"
 
+# componentLuminance with arg 0 — should return 0 (0/255=0, ≤0.03928, 0/12.92=0)
+clum0_output="$(zig_hot compile-body src/terminal/color.zig componentLuminance 0 2>&1 || true)"
+expect_contains "$clum0_output" "value: 0"
+echo "componentLuminance(0) = 0 ✓"
+
 # eql — field comparison + boolean AND chain
 eql_output="$(zig_hot compile-body src/terminal/color.zig eql 2>&1)"
 expect_contains "$eql_output" "instructions:"
@@ -598,5 +603,26 @@ expect_contains "$eql_output" "instructions:"
 addcp_output="$(zig_hot compile-body src/font/shaper/run.zig addCodepoint 2>&1 || true)"
 expect_contains "$addcp_output" "instructions:"
 echo "addCodepoint compiles: ${addcp_output:0:80}"
+
+# ── Assoc override end-to-end tests ─────────────────────────────────
+
+# Override answer() to return 99 — then doubleAnswer() should return double(99) = 198
+assoc_output="$(zig_hot assoc answer 'fn answer() i64 { return 99; }' 2>&1)"
+expect_contains "$assoc_output" "done"
+echo "assoc answer override: OK"
+
+da_override="$(zig_hot compile-body test/hot/body_fixture.zig doubleAnswer 2>&1)"
+expect_contains "$da_override" "value: 198"
+echo "assoc override doubleAnswer() = 198 (answer→99, double(99)=198) ✓"
+
+# Override RGB.componentLuminance — qualified with struct name and file
+clum_assoc="$(zig_hot assoc RGB.componentLuminance --file src/terminal/color.zig 'fn componentLuminance(c: u8) f64 { return 1; }' 2>&1)"
+expect_contains "$clum_assoc" "done"
+echo "assoc RGB.componentLuminance override: OK"
+
+# luminance() calls RGB.componentLuminance 3 times → 0.2126*1 + 0.7152*1 + 0.0722*1 = 1.0
+lum_override="$(zig_hot compile-body src/terminal/color.zig luminance 2>&1)"
+expect_contains "$lum_override" "value: 1"
+echo "assoc override luminance() = 1.0 (RGB.componentLuminance→1.0) ✓"
 
 echo "hot smoke test passed"
