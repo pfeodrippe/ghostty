@@ -41,6 +41,14 @@ run_test() {
   printf 'time\t%s\t%ss\n' "$file" "$((SECONDS - start))"
 }
 
+run_smoke() {
+  local script="$1"
+  local start=$SECONDS
+  echo "==> $script"
+  ZIG_BIN="$ZIG_BIN" ZIG_LIB_DIR="$ZIG_LIB_DIR" "$script"
+  printf 'time\t%s\t%ss\n' "$script" "$((SECONDS - start))"
+}
+
 while IFS= read -r file; do
   [[ -n "$file" ]] || continue
   run_test "$file"
@@ -50,4 +58,5 @@ done < <(
 )
 
 run_test "$ROOT_DIR/vendor/zig/lib/std/std.zig"
+run_smoke "$ROOT_DIR/vendor/zig/test/standalone/hot_internal_call/hot-smoke-test.sh"
 printf 'time\t%s\t%ss\n' "hot-compiler-test-total" "$((SECONDS - SUITE_START))"
