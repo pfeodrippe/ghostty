@@ -625,4 +625,27 @@ lum_override="$(zig_hot compile-body src/terminal/color.zig luminance 2>&1)"
 expect_contains "$lum_override" "value: 1"
 echo "assoc override luminance() = 1.0 (RGB.componentLuminance→1.0) ✓"
 
+# Override RunIterator.addCodepoint — the visible_cp dot-to-bang transform
+addcp_assoc="$(zig_hot assoc RunIterator.addCodepoint --file src/font/shaper/run.zig - <<'ASSOC_EOF'
+fn addCodepoint(self: *RunIterator, hasher: anytype, cp: u32, cluster: u32) !void {
+    const visible_cp: u32 = if (cp == '.') '!' else cp;
+    autoHash(hasher, visible_cp);
+    autoHash(hasher, cluster);
+    try self.hooks.addCodepoint(visible_cp, cluster);
+}
+ASSOC_EOF
+2>&1)"
+expect_contains "$addcp_assoc" "done"
+echo "assoc RunIterator.addCodepoint override (visible_cp transform): OK"
+
+# Verify addCodepoint compiles with the override in place
+addcp_body="$(zig_hot compile-body src/font/shaper/run.zig addCodepoint 2>&1 || true)"
+expect_contains "$addcp_body" "instructions:"
+echo "addCodepoint with visible_cp override compiles: OK"
+
+# Unassoc RunIterator.addCodepoint — restore original
+dissoc_addcp="$(zig_hot dissoc RunIterator.addCodepoint 2>&1)"
+expect_contains "$dissoc_addcp" "done"
+echo "dissoc RunIterator.addCodepoint: OK"
+
 echo "hot smoke test passed"
