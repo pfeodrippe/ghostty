@@ -2,8 +2,10 @@
 - [x] interpreter with sub-second eval
   - [x] call some function
   - [x] tools/hot eval 'SOME ARBITRARY ZIG CODE', but for calls for the moment
-- [ ] hot reload
-- [ ] compilation in the background for hot reloaded structures
+- [x] hot reload
+- [ ] vscode extension
+- [ ] https://github.com/lightpanda-io/browser
+- [ ] https://github.com/neurocyte/flow
 - [ ] add flecs to be aware of all of that
 - [ ] vscode extension
 

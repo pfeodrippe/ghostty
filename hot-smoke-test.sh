@@ -110,6 +110,62 @@ wait_for_surface_handle() {
   exit 1
 }
 
+expr_uses_surface_handle() {
+  local expr="$1"
+  local handle
+
+  for handle in "$SURFACE_HANDLE" "${SURFACE_HANDLE_CANDIDATES[@]}"; do
+    [[ -n "$handle" ]] || continue
+    if [[ "$expr" == *"$handle"* ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+refresh_surface_handle_expr() {
+  local expr="$1"
+  local old_handle=""
+  local handle
+
+  for handle in "$SURFACE_HANDLE" "${SURFACE_HANDLE_CANDIDATES[@]}"; do
+    [[ -n "$handle" ]] || continue
+    if [[ "$expr" == *"$handle"* ]]; then
+      old_handle="$handle"
+      break
+    fi
+  done
+
+  wait_for_surface_handle
+
+  if [[ -n "$old_handle" ]]; then
+    printf '%s' "${expr//$old_handle/$SURFACE_HANDLE}"
+  else
+    printf '%s' "$expr"
+  fi
+}
+
+LAST_EVAL_EXPR=""
+LAST_EVAL_OUTPUT=""
+
+run_eval() {
+  local expr="$1"
+
+  LAST_EVAL_EXPR="$expr"
+  if expr_uses_surface_handle "$LAST_EVAL_EXPR"; then
+    activate_ghostty_app
+  fi
+
+  LAST_EVAL_OUTPUT="$(zig_hot --eval "$LAST_EVAL_EXPR" 2>&1 || true)"
+
+  if grep -Fq "err: UnknownHandle" <<<"$LAST_EVAL_OUTPUT" && expr_uses_surface_handle "$LAST_EVAL_EXPR"; then
+    LAST_EVAL_EXPR="$(refresh_surface_handle_expr "$LAST_EVAL_EXPR")"
+    activate_ghostty_app
+    LAST_EVAL_OUTPUT="$(zig_hot --eval "$LAST_EVAL_EXPR" 2>&1 || true)"
+  fi
+}
+
 validate_decl_graph_config() {
   local config_path="$ROOT_DIR/.zig-cache/hot/ghostty.config"
   if [[ ! -f "$config_path" ]]; then
@@ -153,6 +209,8 @@ validate_decl_graph_semantic_edges() {
   local shaders_file="$ROOT_DIR/src/renderer/metal/shaders.zig"
   local pipeline_file="$ROOT_DIR/src/renderer/metal/Pipeline.zig"
   local version_file="$ROOT_DIR/src/cli/version.zig"
+  local config_capi_file="$ROOT_DIR/src/config/CApi.zig"
+  local global_file="$ROOT_DIR/src/global.zig"
 
   if ! awk -F '\t' \
     -v run_file="$run_file" \
@@ -164,7 +222,9 @@ validate_decl_graph_semantic_edges() {
     -v iosurface_layer_file="$iosurface_layer_file" \
     -v shaders_file="$shaders_file" \
     -v pipeline_file="$pipeline_file" \
-    -v version_file="$version_file" '
+    -v version_file="$version_file" \
+    -v config_capi_file="$config_capi_file" \
+    -v global_file="$global_file" '
     $1 == "decl-node" && $3 == "function_decl" && $4 == run_file && $5 == "RunIterator.next" {
       next_key = $2
     }
@@ -218,6 +278,12 @@ validate_decl_graph_semantic_edges() {
     }
     $1 == "decl-node" && $3 == "var_decl" && $4 == iosurface_layer_file && $5 == "Subclass" {
       subclass_key = $2
+    }
+    $1 == "decl-node" && $3 == "function_decl" && $4 == config_capi_file && $5 == "ghostty_config_open_path" {
+      config_open_path_key = $2
+    }
+    $1 == "decl-node" && $3 == "var_decl" && $4 == global_file && $5 == "state" {
+      global_state_key = $2
     }
     $1 == "decl-node" && $3 == "const_decl" && $4 == shaders_file && $5 == "PipelineCollection" {
       pipeline_collection_key = $2
@@ -333,6 +399,14 @@ validate_decl_graph_semantic_edges() {
         print "error: missing declaration graph node for Subclass" > "/dev/stderr"
         exit 1
       }
+      if (config_open_path_key == "") {
+        print "error: missing declaration graph node for ghostty_config_open_path" > "/dev/stderr"
+        exit 1
+      }
+      if (global_state_key == "") {
+        print "error: missing declaration graph node for global.state" > "/dev/stderr"
+        exit 1
+      }
       if (pipeline_collection_key == "") {
         print "error: missing declaration graph node for PipelineCollection" > "/dev/stderr"
         exit 1
@@ -423,6 +497,10 @@ validate_decl_graph_semantic_edges() {
       }
       if (!((get_subclass_key SUBSEP subclass_key) in writes)) {
         print "error: missing declaration graph writes edge: getSubclass -> Subclass" > "/dev/stderr"
+        exit 1
+      }
+      if (!((config_open_path_key SUBSEP global_state_key) in reads)) {
+        print "error: missing declaration graph reads edge: ghostty_config_open_path -> global.state" > "/dev/stderr"
         exit 1
       }
       if (!((next_key SUBSEP add_codepoint_key) in specializes)) {
@@ -523,7 +601,9 @@ expect_eval_contains() {
   local needle="$2"
 
   local output
-  output="$(zig_hot --eval "$expr" 2>&1)"
+  run_eval "$expr"
+  expr="$LAST_EVAL_EXPR"
+  output="$LAST_EVAL_OUTPUT"
   expect_contains "$output" "status:"
   expect_contains "$output" "  done"
   if grep -Fq "err:" <<<"$output" || grep -Fq "  eval-error" <<<"$output"; then
@@ -540,10 +620,45 @@ expect_eval_value() {
   expect_eval_contains "$expr" "value: $expected"
 }
 
+eval_value() {
+  local expr="$1"
+  local output
+  run_eval "$expr"
+  expr="$LAST_EVAL_EXPR"
+  output="$LAST_EVAL_OUTPUT"
+  expect_contains "$output" "status:"
+  expect_contains "$output" "  done"
+  if grep -Fq "err:" <<<"$output" || grep -Fq "  eval-error" <<<"$output"; then
+    echo "error: expected successful hot eval for: $expr" >&2
+    echo "$output" >&2
+    exit 1
+  fi
+  awk '
+    /^value:/ {
+      sub(/^value: /, "");
+      print;
+      found = 1;
+      exit 0;
+    }
+    END {
+      if (!found) exit 1;
+    }
+  ' <<<"$output"
+}
+
 expect_eval_done() {
   local expr="$1"
-  expect_eval_contains "$expr" "status:"
-  expect_eval_contains "$expr" "  done"
+  local output
+  run_eval "$expr"
+  expr="$LAST_EVAL_EXPR"
+  output="$LAST_EVAL_OUTPUT"
+  expect_contains "$output" "status:"
+  expect_contains "$output" "  done"
+  if grep -Fq "err:" <<<"$output" || grep -Fq "  eval-error" <<<"$output"; then
+    echo "error: expected successful hot eval for: $expr" >&2
+    echo "$output" >&2
+    exit 1
+  fi
 }
 
 expect_log_after() {
@@ -714,6 +829,7 @@ expect_contains "$describe_output" "renderer.cell.isBlockElement"
 expect_contains "$describe_output" "renderer.cell.isCovering"
 expect_contains "$describe_output" "renderer.cell.noMinContrast"
 expect_contains "$describe_output" "ghostty_surface_process_exited"
+expect_contains "$describe_output" "ghostty_surface_size"
 
 eval_output="$(zig_hot --eval 'renderer.cell.isBlockElement(9608)' 2>&1)"
 expect_contains "$eval_output" "value: true"
@@ -749,6 +865,28 @@ expect_contains "$surface_export_dissoc" "done"
 expect_contains "$surface_export_dissoc" "native: restored"
 expect_eval_value "ghostty_surface_process_exited($SURFACE_HANDLE)" "false"
 echo "assoc ghostty exported surface boundary via short name: OK"
+
+surface_size_before="$(eval_value "ghostty_surface_size($SURFACE_HANDLE)")"
+surface_size_assoc="$(zig_hot assoc ghostty_surface_size --file src/apprt/embedded.zig 'fn ghostty_surface_size(surface: *Surface) SurfaceSize { _ = surface; return .{ .columns = 111, .rows = 22, .width_px = 333, .height_px = 444, .cell_width_px = 5, .cell_height_px = 6 }; }' 2>&1)"
+expect_contains "$surface_size_assoc" "done"
+expect_contains "$surface_size_assoc" "native: patched"
+surface_size_after_assoc="$(eval_value "ghostty_surface_size($SURFACE_HANDLE)")"
+if [[ "$surface_size_after_assoc" != '.{ .columns = 111, .rows = 22, .width_px = 333, .height_px = 444, .cell_width_px = 5, .cell_height_px = 6 }' ]]; then
+  echo "error: expected ghostty_surface_size aggregate return override" >&2
+  echo "ghostty_surface_size after assoc: $surface_size_after_assoc" >&2
+  exit 1
+fi
+surface_size_dissoc="$(zig_hot dissoc embedded.CAPI.ghostty_surface_size 2>&1)"
+expect_contains "$surface_size_dissoc" "done"
+expect_contains "$surface_size_dissoc" "native: restored"
+surface_size_after_dissoc="$(eval_value "ghostty_surface_size($SURFACE_HANDLE)")"
+if [[ "$surface_size_after_dissoc" != "$surface_size_before" ]]; then
+  echo "error: expected ghostty_surface_size to restore baseline after dissoc" >&2
+  echo "ghostty_surface_size baseline: $surface_size_before" >&2
+  echo "ghostty_surface_size after dissoc: $surface_size_after_dissoc" >&2
+  exit 1
+fi
+echo "assoc ghostty exported aggregate return via short name: OK"
 
 ui_marker="GHOSTTY_HOT_UI_VERIFY_${RANDOM}_${RANDOM}"
 ui_paste_text=$'# '"$ui_marker"$'\r'
@@ -921,6 +1059,36 @@ expect_hot_success "$dissoc_subclass_probe"
 dissoc_subclass_var="$(zig_hot dissoc Subclass 2>&1)"
 expect_hot_success "$dissoc_subclass_var"
 echo "dissoc Subclass probe and var override: OK"
+
+# Probe Ghostty imported runtime_addressable aliases through a real project function slot.
+state_probe_assoc="$(zig_hot assoc --no-native ghostty_init --file src/main_c.zig 'fn ghostty_init(argc: usize, argv: [*][*:0]u8) c_int { _ = argc; _ = argv; return if (@intFromPtr(state) == 0) 0 else 7; }' 2>&1)"
+expect_hot_success "$state_probe_assoc"
+echo "assoc ghostty_init imported state probe: OK"
+
+state_assoc_one="$(zig_hot assoc --type var --no-native state 1 2>&1)"
+expect_hot_success "$state_assoc_one"
+state_probe_one="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttyInitStateProbe 2>&1)"
+expect_hot_success "$state_probe_one"
+expect_contains "$state_probe_one" "value: 7"
+echo "assoc state imported runtime_addressable alias -> non-zero: OK"
+
+state_assoc_zero="$(zig_hot assoc --type var --no-native state 0 2>&1)"
+expect_hot_success "$state_assoc_zero"
+state_probe_zero="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttyInitStateProbe 2>&1)"
+expect_hot_success "$state_probe_zero"
+expect_contains "$state_probe_zero" "value: 0"
+echo "assoc state imported runtime_addressable alias -> zero: OK"
+
+state_assoc_restore="$(zig_hot assoc --type var --no-native state 1 2>&1)"
+expect_hot_success "$state_assoc_restore"
+state_probe_restore="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttyInitStateProbe 2>&1)"
+expect_hot_success "$state_probe_restore"
+expect_contains "$state_probe_restore" "value: 7"
+dissoc_state_probe="$(zig_hot dissoc ghostty_init 2>&1)"
+expect_hot_success "$dissoc_state_probe"
+dissoc_state_var="$(zig_hot dissoc state 2>&1)"
+expect_hot_success "$dissoc_state_var"
+echo "dissoc ghostty imported state probe and var override: OK"
 
 # Override Shaper.getFont without native patching — the live path should execute
 # and Ghostty must stay responsive even if the override returns an error.
