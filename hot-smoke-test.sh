@@ -139,6 +139,7 @@ validate_decl_graph_semantic_edges() {
   local iosurface_layer_file="$ROOT_DIR/src/renderer/metal/IOSurfaceLayer.zig"
   local shaders_file="$ROOT_DIR/src/renderer/metal/shaders.zig"
   local pipeline_file="$ROOT_DIR/src/renderer/metal/Pipeline.zig"
+  local version_file="$ROOT_DIR/src/cli/version.zig"
 
   if ! awk -F '\t' \
     -v run_file="$run_file" \
@@ -149,7 +150,8 @@ validate_decl_graph_semantic_edges() {
     -v apprt_surface_file="$apprt_surface_file" \
     -v iosurface_layer_file="$iosurface_layer_file" \
     -v shaders_file="$shaders_file" \
-    -v pipeline_file="$pipeline_file" '
+    -v pipeline_file="$pipeline_file" \
+    -v version_file="$version_file" '
     $1 == "decl-node" && $3 == "function_decl" && $4 == run_file && $5 == "RunIterator.next" {
       next_key = $2
     }
@@ -209,6 +211,15 @@ validate_decl_graph_semantic_edges() {
     }
     $1 == "decl-node" && $3 == "file_root" && $4 == pipeline_file && $5 == "" {
       pipeline_root_key = $2
+    }
+    $1 == "decl-node" && $3 == "function_decl" && $4 == version_file && $5 == "run" {
+      version_run_key = $2
+    }
+    $1 == "decl-node" && $3 == "const_decl" && $6 == "build_options" && $5 == "x11" {
+      build_options_x11_key = $2
+    }
+    $1 == "decl-node" && $3 == "const_decl" && $6 == "build_options" && $5 == "wayland" {
+      build_options_wayland_key = $2
     }
     $1 == "decl-edge" && $2 == "type_dep" {
       type_dep[$3 SUBSEP $4] = 1
@@ -317,6 +328,18 @@ validate_decl_graph_semantic_edges() {
         print "error: missing declaration graph file-root node for metal/Pipeline.zig" > "/dev/stderr"
         exit 1
       }
+      if (version_run_key == "") {
+        print "error: missing declaration graph node for cli.version.run" > "/dev/stderr"
+        exit 1
+      }
+      if (build_options_x11_key == "") {
+        print "error: missing declaration graph node for build_options.x11" > "/dev/stderr"
+        exit 1
+      }
+      if (build_options_wayland_key == "") {
+        print "error: missing declaration graph node for build_options.wayland" > "/dev/stderr"
+        exit 1
+      }
       if (!((next_key SUBSEP iterator_key) in type_dep)) {
         print "error: missing declaration graph type_dep edge: RunIterator.next -> RunIterator" > "/dev/stderr"
         exit 1
@@ -339,6 +362,14 @@ validate_decl_graph_semantic_edges() {
       }
       if (!((shape_shaper_key SUBSEP coretext_shaper_key) in comptime_dep)) {
         print "error: missing declaration graph comptime_dep edge: shape.Shaper -> coretext.Shaper" > "/dev/stderr"
+        exit 1
+      }
+      if (!((version_run_key SUBSEP build_options_x11_key) in comptime_dep)) {
+        print "error: missing declaration graph comptime_dep edge: cli.version.run -> build_options.x11" > "/dev/stderr"
+        exit 1
+      }
+      if (!((version_run_key SUBSEP build_options_wayland_key) in comptime_dep)) {
+        print "error: missing declaration graph comptime_dep edge: cli.version.run -> build_options.wayland" > "/dev/stderr"
         exit 1
       }
       if (!((termio_root_key SUBSEP surface_mailbox_key) in type_dep)) {
@@ -408,6 +439,19 @@ expect_contains() {
   if ! grep -Fq "$needle" <<<"$haystack"; then
     echo "error: expected output to contain: $needle" >&2
     echo "$haystack" >&2
+    exit 1
+  fi
+}
+
+expect_hot_success() {
+  local output="$1"
+  expect_contains "$output" "status:"
+  expect_contains "$output" "  done"
+  if grep -Fq "err:" <<<"$output" ||
+    grep -Fq "  error" <<<"$output" ||
+    grep -Fq "  eval-error" <<<"$output"; then
+    echo "error: expected successful hot command" >&2
+    echo "$output" >&2
     exit 1
   fi
 }
@@ -691,6 +735,14 @@ classify_output="$(zig_hot classify src/os/desktop.zig 2>&1)"
 expect_contains "$classify_output" "body-class="
 expect_contains "$classify_output" "launchedFromDesktop"
 
+classify_config_output="$(zig_hot classify src/config/Config.zig 2>&1)"
+expect_contains "$classify_config_output" "Config"
+expect_contains "$classify_config_output" "reason=struct-container"
+
+invalidate_config_output="$(zig_hot invalidate src/config/Config.zig 2>&1)"
+expect_contains "$invalidate_config_output" "impact:"
+expect_contains "$invalidate_config_output" "decl-key=owner=root;file=$ROOT_DIR/src/config/key.zig;decl=Key;kind=const_decl reason=comptime_dep"
+
 # Compile and execute a simple function body via nREPL
 compile_output="$(zig_hot compile-body test/hot/body_fixture.zig answer 2>&1)"
 expect_contains "$compile_output" "value: 42"
@@ -816,20 +868,62 @@ expect_contains "$dissoc_ef" "done"
 expect_contains "$dissoc_ef" "native: restored"
 echo "dissoc Shaper.endFrame: OK"
 
-# Override Shaper.getFont — trivial override returning error
-gf_assoc="$(zig_hot assoc Shaper.getFont --file src/font/shaper/coretext.zig - <<'GF_EOF'
+# Probe Ghostty runtime_addressable var reads through a real project function slot.
+subclass_probe_assoc="$(zig_hot assoc --no-native getSubclass --file src/renderer/metal/IOSurfaceLayer.zig 'fn getSubclass() error{ObjCFailed}!objc.Class { return if (Subclass == null) 0 else 1; }' 2>&1)"
+expect_hot_success "$subclass_probe_assoc"
+echo "assoc getSubclass value-cell probe: OK"
+
+subclass_assoc_one="$(zig_hot assoc --type var --no-native Subclass 1 2>&1)"
+expect_hot_success "$subclass_assoc_one"
+subclass_probe_one="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttyGetSubclass 2>&1)"
+expect_hot_success "$subclass_probe_one"
+expect_contains "$subclass_probe_one" "value: 1"
+echo "assoc Subclass runtime_addressable var -> non-null: OK"
+
+subclass_assoc_null="$(zig_hot assoc --type var --no-native Subclass null 2>&1)"
+expect_hot_success "$subclass_assoc_null"
+subclass_probe_null="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttyGetSubclass 2>&1)"
+expect_hot_success "$subclass_probe_null"
+expect_contains "$subclass_probe_null" "value: 0"
+echo "assoc Subclass runtime_addressable var -> null: OK"
+
+subclass_assoc_restore="$(zig_hot assoc --type var --no-native Subclass 1 2>&1)"
+expect_hot_success "$subclass_assoc_restore"
+subclass_probe_restore="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttyGetSubclass 2>&1)"
+expect_hot_success "$subclass_probe_restore"
+expect_contains "$subclass_probe_restore" "value: 1"
+dissoc_subclass_probe="$(zig_hot dissoc getSubclass 2>&1)"
+expect_hot_success "$dissoc_subclass_probe"
+dissoc_subclass_var="$(zig_hot dissoc Subclass 2>&1)"
+expect_hot_success "$dissoc_subclass_var"
+echo "dissoc Subclass probe and var override: OK"
+
+# Override Shaper.getFont without native patching — the live path should execute
+# and Ghostty must stay responsive even if the override returns an error.
+gf_assoc="$(zig_hot assoc --no-native Shaper.getFont --file src/font/shaper/coretext.zig - <<GF_EOF
 fn getFont(self: *Shaper, grid: *font.SharedGrid, index: font.Collection.Index) !*macos.foundation.Dictionary {
-    _ = self; _ = grid; _ = index;
+    _ = self;
+    _ = grid;
+    _ = index;
     return error.Unexpected;
 }
 GF_EOF
 2>&1)"
 expect_contains "$gf_assoc" "done"
-echo "assoc Shaper.getFont override: OK"
+echo "assoc Shaper.getFont --no-native override: OK"
 
-# Dissoc getFont
+gf_probe_text=$'clear\r# PATCHCHECK_GETFONT_ASSOC\r'
+paste_ghostty_text "$gf_probe_text"
+expect_eval_value "ghostty_surface_process_exited($SURFACE_HANDLE)" "false"
+echo "assoc Shaper.getFont --no-native live path reached without crash: OK"
+
+# Dissoc getFont and prove the renderer recovers
 dissoc_gf="$(zig_hot dissoc Shaper.getFont 2>&1)"
 expect_contains "$dissoc_gf" "done"
+expect_eval_value "ghostty_surface_process_exited($SURFACE_HANDLE)" "false"
+gf_restore_text=$'clear\r# PATCHCHECK_GETFONT_DISSOC\r'
+paste_ghostty_text "$gf_restore_text"
+expect_ghostty_ocr_contains "PATCHCHECK_GETFONT_DISSOC"
 echo "dissoc Shaper.getFont: OK"
 
 # ── Verify dissoc restores original behavior ──────────────────────────

@@ -58,5 +58,10 @@ done < <(
 )
 
 run_test "$ROOT_DIR/vendor/zig/lib/std/std.zig"
-run_smoke "$ROOT_DIR/vendor/zig/test/standalone/hot_internal_call/hot-smoke-test.sh"
+while IFS= read -r script; do
+  [[ -n "$script" ]] || continue
+  run_smoke "$script"
+done < <(
+  find "$ROOT_DIR/vendor/zig/test/standalone" -mindepth 2 -maxdepth 2 -name 'hot-smoke-test.sh' | sort
+)
 printf 'time\t%s\t%ss\n' "hot-compiler-test-total" "$((SECONDS - SUITE_START))"
