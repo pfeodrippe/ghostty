@@ -9,6 +9,11 @@ HOT_LOG="${HOT_LOG:-$ROOT_DIR/.hot-run.log}"
 GHOSTTY_BIN_PATTERN="${GHOSTTY_BIN_PATTERN:-macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty}"
 GHOSTTY_APP_PATH="${GHOSTTY_APP_PATH:-$ROOT_DIR/macos/build/Debug/Ghostty.app}"
 SURFACE_HANDLE='@objc:NSApp.activeWindow.contentView//surfaceModel.asObject.surface'
+SURFACE_HANDLE_CANDIDATES=(
+  '@objc:NSApp.activeWindow.contentView//surfaceModel.asObject.surface'
+  '@objc:NSApp.keyWindow.contentView//surfaceModel.asObject.surface'
+  '@objc:NSApp.mainWindow.contentView//surfaceModel.asObject.surface'
+)
 
 if [[ ! -x "$HOT_BIN" ]]; then
   echo "error: missing hot wrapper at $HOT_BIN" >&2
@@ -75,21 +80,29 @@ wait_for_app_ready() {
 
 wait_for_surface_handle() {
   local deadline=$((SECONDS + 60))
-  local probe_expr="ghostty_surface_process_exited($SURFACE_HANDLE)"
   local output=""
+  local handle=""
+  local probe_expr=""
 
   while (( SECONDS < deadline )); do
-    output="$(zig_hot --eval "$probe_expr" 2>&1 || true)"
-    if grep -Fq "status:" <<<"$output" &&
-      grep -Fq "  done" <<<"$output" &&
-      ! grep -Fq "err:" <<<"$output" &&
-      ! grep -Fq "  eval-error" <<<"$output"; then
-      return 0
-    fi
+    activate_ghostty_app
+    for handle in "${SURFACE_HANDLE_CANDIDATES[@]}"; do
+      probe_expr="ghostty_surface_process_exited($handle)"
+      output="$(zig_hot --eval "$probe_expr" 2>&1 || true)"
+      if grep -Fq "status:" <<<"$output" &&
+        grep -Fq "  done" <<<"$output" &&
+        ! grep -Fq "err:" <<<"$output" &&
+        ! grep -Fq "  eval-error" <<<"$output"; then
+        SURFACE_HANDLE="$handle"
+        return 0
+      fi
+    done
     sleep 1
   done
 
-  echo "error: timed out waiting for hot surface handle: $SURFACE_HANDLE" >&2
+  echo "error: timed out waiting for hot surface handle candidates" >&2
+  printf 'candidates:\n' >&2
+  printf '  %s\n' "${SURFACE_HANDLE_CANDIDATES[@]}" >&2
   echo "$output" >&2
   if [[ -f "$HOT_LOG" ]]; then
     tail -n 120 "$HOT_LOG" >&2
@@ -726,6 +739,17 @@ expect_value "renderer.cell.isBlockElement" "true" 9608
 expect_value "renderer.cell.isCovering" "true" 9608
 expect_value "renderer.cell.noMinContrast" "true" 9608
 expect_eval_value "ghostty_surface_process_exited($SURFACE_HANDLE)" "false"
+
+surface_export_assoc="$(zig_hot assoc ghostty_surface_process_exited --file src/apprt/embedded.zig 'fn ghostty_surface_process_exited(surface: *Surface) bool { _ = surface; return true; }' 2>&1)"
+expect_contains "$surface_export_assoc" "done"
+expect_contains "$surface_export_assoc" "native: patched"
+expect_eval_value "ghostty_surface_process_exited($SURFACE_HANDLE)" "true"
+surface_export_dissoc="$(zig_hot dissoc embedded.CAPI.ghostty_surface_process_exited 2>&1)"
+expect_contains "$surface_export_dissoc" "done"
+expect_contains "$surface_export_dissoc" "native: restored"
+expect_eval_value "ghostty_surface_process_exited($SURFACE_HANDLE)" "false"
+echo "assoc ghostty exported surface boundary via short name: OK"
+
 ui_marker="GHOSTTY_HOT_UI_VERIFY_${RANDOM}_${RANDOM}"
 ui_paste_text=$'# '"$ui_marker"$'\r'
 paste_ghostty_text "$ui_paste_text"
