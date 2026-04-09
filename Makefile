@@ -233,6 +233,14 @@ hot-run: hot-stop $(ZIG_INSTALL_STAMP)
 hot-test: hot-stop $(ZIG_INSTALL_STAMP)
 	@mkdir -p "$(dir $(HOT_LOG))"
 	@bash -lc 'set -euo pipefail; \
+		clean_dir() { \
+			local path="$$1"; \
+			if [ -e "$$path" ]; then \
+				echo "clean\t$$path"; \
+				rm -rf "$$path"; \
+			fi; \
+		}; \
+		clean_dir .zig-cache; \
 		rm -f "$(HOT_LOG)" "$(HOT_PID)"; \
 		cleanup() { "$(MAKE)" hot-stop >/dev/null 2>&1 || true; }; \
 		trap cleanup EXIT INT TERM; \
@@ -255,11 +263,9 @@ test-hot-all:
 		rm -f "$$log"; \
 		exec > >(tee "$$log") 2>&1; \
 		echo "log\t$$log"; \
-		rm -rf .zig-cache; \
 		"$(MAKE)" hot-compiler-test; \
 		"$(MAKE)" hot-test; \
-		"$(MAKE)" -C "$(TIGERBEETLE_DIR)" HOT_ZIG="$(ZIG)" HOT_ZIG_LIB_DIR="$(ZIG_LIB_DIR)" hot-test; \
-		rm -rf .zig-cache'
+		"$(MAKE)" -C "$(TIGERBEETLE_DIR)" HOT_ZIG="$(ZIG)" HOT_ZIG_LIB_DIR="$(ZIG_LIB_DIR)" hot-test'
 .PHONY: test-hot-all
 
 vendor-zig: vendor-zig-install

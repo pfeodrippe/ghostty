@@ -33,6 +33,22 @@ prepend_lib_dir "$ZLIB_PREFIX/lib"
 export ZIG_HOT_ZIG_BIN="$ZIG_BIN"
 SUITE_START=$SECONDS
 
+clean_dir() {
+  local path="$1"
+  [[ -e "$path" ]] || return 0
+  printf 'clean\t%s\n' "$path"
+  rm -rf "$path"
+}
+
+clean_dir "$ROOT_DIR/.zig-cache"
+while IFS= read -r path; do
+  [[ -n "$path" ]] || continue
+  clean_dir "$path"
+done < <(
+  find "$ROOT_DIR/vendor/zig/test/standalone" -mindepth 2 -maxdepth 2 -type d \
+    \( -name .zig-cache -o -name zig-out \) | sort
+)
+
 run_test() {
   local file="$1"
   local start=$SECONDS
