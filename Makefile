@@ -11,6 +11,7 @@ ZIG_VERSION_STRING ?= 0.15.2-dev.0+ghosttyhot
 HOT_LOG := $(REPO_ROOT)/.hot-run.log
 HOT_PID := $(REPO_ROOT)/.hot-run.pid
 TIGERBEETLE_DIR ?= $(abspath vendor/tigerbeetle)
+CODE_BIN ?= code
 GHOSTTY_RUN_ARGS := -- --config-default-files=false --window-vsync=false
 LLVM_PREFIX ?= $(shell brew --prefix llvm@20 2>/dev/null)
 LLD_PREFIX ?= $(shell brew --prefix lld@20 2>/dev/null)
@@ -252,6 +253,11 @@ hot-test: hot-stop $(ZIG_INSTALL_STAMP)
 		echo "$$run_pid" >"$(HOT_PID)"; \
 		./hot-smoke-test.sh'
 .PHONY: hot-test
+
+hot-vscode-ghostty-test: hot-stop $(ZIG_INSTALL_STAMP)
+	@CODE_BIN="$(CODE_BIN)" ZIG_BIN="$(ZIG)" ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
+		bash "$(REPO_ROOT)/vendor/zig/tools/hot-vscode/test/vscode_ghostty_live_smoke.sh"
+.PHONY: hot-vscode-ghostty-test
 
 hot-compiler-test: $(ZIG_INSTALL_STAMP)
 	DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$$DYLD_LIBRARY_PATH" ./hot-compiler-test.sh

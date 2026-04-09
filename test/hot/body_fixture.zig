@@ -26,3 +26,5 @@ fn double(x: i64) i64 {
 fn doubleAnswer() i64 {
     return double(answer());
 }
+
+// Editor smoke eval fixture: renderer.cell.isBlockElement(9608)

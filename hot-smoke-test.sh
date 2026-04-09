@@ -856,6 +856,18 @@ expect_value "renderer.cell.isCovering" "true" 9608
 expect_value "renderer.cell.noMinContrast" "true" 9608
 expect_eval_value "ghostty_surface_process_exited($SURFACE_HANDLE)" "false"
 
+# Fresh-runtime downstream managed-state probes must work before any assoc/dissoc
+# or reload seeds managed state for these graphs.
+ghostty_init_cold_output="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttyGlobalStateActionProbe 2>&1 || true)"
+expect_hot_success "$ghostty_init_cold_output"
+expect_contains "$ghostty_init_cold_output" "value: 7"
+echo "cold-start ghostty global.state reads live managed state: OK"
+
+ghostty_config_open_path_cold_output="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttyConfigOpenPathProbe 2>&1 || true)"
+expect_hot_success "$ghostty_config_open_path_cold_output"
+expect_contains "$ghostty_config_open_path_cold_output" "value: 7"
+echo "cold-start ghostty config resources probe reads live config state: OK"
+
 surface_export_assoc="$(zig_hot assoc ghostty_surface_process_exited --file src/apprt/embedded.zig 'fn ghostty_surface_process_exited(surface: *Surface) bool { _ = surface; return true; }' 2>&1)"
 expect_contains "$surface_export_assoc" "done"
 expect_contains "$surface_export_assoc" "native: patched"
@@ -1060,7 +1072,7 @@ dissoc_subclass_var="$(zig_hot dissoc Subclass 2>&1)"
 expect_hot_success "$dissoc_subclass_var"
 echo "dissoc Subclass probe and var override: OK"
 
-# Probe Ghostty imported runtime_addressable aliases through a real project function slot.
+# Probe Ghostty imported runtime_addressable alias overrides through a real project function slot.
 state_probe_assoc="$(zig_hot assoc --no-native ghostty_init --file src/main_c.zig 'fn ghostty_init(argc: usize, argv: [*][*:0]u8) c_int { _ = argc; _ = argv; return if (@intFromPtr(state) == 0) 0 else 7; }' 2>&1)"
 expect_hot_success "$state_probe_assoc"
 echo "assoc ghostty_init imported state probe: OK"
