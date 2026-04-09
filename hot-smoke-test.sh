@@ -912,13 +912,43 @@ expect_contains "$classify_output" "launchedFromDesktop"
 classify_config_output="$(zig_hot classify src/config/Config.zig 2>&1)"
 expect_contains "$classify_config_output" "Config"
 expect_contains "$classify_config_output" "reason=struct-container"
+expect_contains "$classify_config_output" "boundary=versioned-only"
+expect_contains "$classify_config_output" "guidance=reload-dependents"
+
+classify_embedded_output="$(zig_hot classify src/apprt/embedded.zig 2>&1)"
+expect_contains "$classify_embedded_output" "App.Options"
+expect_contains "$classify_embedded_output" "reason=extern-container"
+expect_contains "$classify_embedded_output" "boundary=versioned-only"
+expect_contains "$classify_embedded_output" "guidance=reload-dependents"
+
+classify_action_output="$(zig_hot classify src/apprt/action.zig 2>&1)"
+expect_contains "$classify_action_output" "SizeLimit"
+expect_contains "$classify_action_output" "reason=extern-container"
+expect_contains "$classify_action_output" "boundary=versioned-only"
+expect_contains "$classify_action_output" "guidance=reload-dependents"
+
+classify_structs_output="$(zig_hot classify src/apprt/structs.zig 2>&1)"
+expect_contains "$classify_structs_output" "ClipboardRequest"
+expect_contains "$classify_structs_output" "reason=union-container"
+expect_contains "$classify_structs_output" "boundary=versioned-only"
+expect_contains "$classify_structs_output" "guidance=reload-dependents"
 
 invalidate_config_output="$(zig_hot invalidate src/config/Config.zig 2>&1)"
 expect_contains "$invalidate_config_output" "impact:"
 expect_contains "$invalidate_config_output" "decl-key=owner=root;file=$ROOT_DIR/src/config/key.zig;decl=Key;kind=const_decl reason=comptime_dep"
 
-# Compile and execute a simple function body via nREPL
-compile_output="$(zig_hot compile-body test/hot/body_fixture.zig answer 2>&1)"
+size_limit_probe_output="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttySizeLimitWrapperProbe 2>&1)"
+expect_hot_success "$size_limit_probe_output"
+expect_contains "$size_limit_probe_output" "value: 17"
+echo "SizeLimit wrapper probe: OK"
+
+clipboard_probe_output="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttyClipboardRequestWrapperProbe 2>&1)"
+expect_hot_success "$clipboard_probe_output"
+expect_contains "$clipboard_probe_output" "value: .selection"
+echo "ClipboardRequest wrapper probe: OK"
+
+    # Compile and execute a simple function body via nREPL
+    compile_output="$(zig_hot compile-body test/hot/body_fixture.zig answer 2>&1)"
 expect_contains "$compile_output" "value: 42"
 expect_contains "$compile_output" "instructions:"
 
