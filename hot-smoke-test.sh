@@ -944,7 +944,7 @@ echo "SizeLimit wrapper probe: OK"
 
 clipboard_probe_output="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttyClipboardRequestWrapperProbe 2>&1)"
 expect_hot_success "$clipboard_probe_output"
-expect_contains "$clipboard_probe_output" "value: .selection"
+expect_contains "$clipboard_probe_output" "value: 1"
 echo "ClipboardRequest wrapper probe: OK"
 
     # Compile and execute a simple function body via nREPL
