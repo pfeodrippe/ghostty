@@ -4,6 +4,7 @@
   - [x] tools/hot eval 'SOME ARBITRARY ZIG CODE', but for calls for the moment
 - [x] hot reload
 - [x] vscode extension
+- [ ] improve total test-hot-all time to under 20 mins
 - [ ] https://github.com/lightpanda-io/browser
 - [ ] https://github.com/neurocyte/flow
 - [ ] quint support checking in the hot zig compiler

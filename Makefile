@@ -10,6 +10,9 @@ ZIG_INSTALL_STAMP := $(abspath $(ZIG_INSTALL_DIR))/.install-stamp
 ZIG_VERSION_STRING ?= 0.15.2-dev.0+ghosttyhot
 HOT_LOG := $(REPO_ROOT)/.hot-run.log
 HOT_PID := $(REPO_ROOT)/.hot-run.pid
+HOT_PORT_FILE := $(REPO_ROOT)/.nrepl-port
+HOT_CONFIG_FILE := $(REPO_ROOT)/.zig-cache/hot/ghostty.config
+HOT_TEST_CLEAN ?= 0
 TIGERBEETLE_DIR ?= $(abspath vendor/tigerbeetle)
 CODE_BIN ?= code
 GHOSTTY_RUN_ARGS := -- --config-default-files=false --window-vsync=false
@@ -39,12 +42,13 @@ ifneq ($(wildcard $(ZIG_SOURCE_DIR)/CMakeLists.txt),)
 # staged compiler build and the installed toolchain contents. `zig2` itself
 # won't rebuild for lib-only edits, but `cmake --build --target install` still
 # needs to run when the final CLI/runtime changes. Build-script-only std changes
-# (such as std.Build.Hot) are consumed directly from ZIG_LIB_DIR during `zig build`
-# and should not force a stage3 reinstall.
+# (such as std.Build.Hot and lib/compiler/hot) are consumed directly from
+# ZIG_LIB_DIR during `zig build` and should not force a staged reinstall.
 ZIG_BUILD_PREREQS := $(addprefix $(ZIG_SOURCE_DIR)/,$(shell cd "$(ZIG_SOURCE_DIR)" && git ls-files CMakeLists.txt cmake src stage1 stage2))
 ZIG_INSTALL_PREREQS := $(filter-out \
 	$(ZIG_SOURCE_DIR)/lib/std/Build.zig \
 	$(ZIG_SOURCE_DIR)/lib/std/Build/% \
+	$(ZIG_SOURCE_DIR)/lib/compiler/hot/% \
 	$(ZIG_SOURCE_DIR)/lib/std/build_runner.zig, \
 	$(addprefix $(ZIG_SOURCE_DIR)/,$(shell cd "$(ZIG_SOURCE_DIR)" && git ls-files build.zig CMakeLists.txt cmake lib src stage1 stage2)))
 endif
@@ -204,18 +208,18 @@ hot-stop:
 		pids=""; \
 		for target in $$matched; do \
 			pids="$$pids $$(collect_descendants "$$target" || true) $$target"; \
-		done; \
+	done; \
 		stop_pids "$$pids"; \
 	}; \
 	stop_pid_file "$(HOT_PID)"; \
 	stop_stale_hot_processes; \
-	rm -f "$(REPO_ROOT)/.nrepl-port" "$(HOT_LOG)" "$(HOT_PID)"
+	rm -f "$(HOT_PORT_FILE)" "$(HOT_LOG)" "$(HOT_PID)" "$(HOT_CONFIG_FILE)"
 .PHONY: hot-stop
 
 hot-run: hot-stop $(ZIG_INSTALL_STAMP)
 	@mkdir -p "$(dir $(HOT_LOG))"
 	@bash -lc 'set -euo pipefail; \
-		rm -f "$(HOT_LOG)" "$(HOT_PID)"; \
+		rm -f "$(HOT_LOG)" "$(HOT_PID)" "$(HOT_PORT_FILE)" "$(HOT_CONFIG_FILE)"; \
 		nohup env \
 			DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$${DYLD_LIBRARY_PATH:-}" \
 			ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
@@ -241,8 +245,8 @@ hot-test: hot-stop $(ZIG_INSTALL_STAMP)
 				rm -rf "$$path"; \
 			fi; \
 		}; \
-		clean_dir .zig-cache; \
-		rm -f "$(HOT_LOG)" "$(HOT_PID)"; \
+		if [ "$(HOT_TEST_CLEAN)" = "1" ]; then clean_dir .zig-cache; fi; \
+		rm -f "$(HOT_LOG)" "$(HOT_PID)" "$(HOT_PORT_FILE)" "$(HOT_CONFIG_FILE)"; \
 		cleanup() { "$(MAKE)" hot-stop >/dev/null 2>&1 || true; }; \
 		trap cleanup EXIT INT TERM; \
 		nohup env \
@@ -254,25 +258,45 @@ hot-test: hot-stop $(ZIG_INSTALL_STAMP)
 		./hot-smoke-test.sh'
 .PHONY: hot-test
 
+hot-test-clean: HOT_TEST_CLEAN=1
+hot-test-clean: hot-test
+.PHONY: hot-test-clean
+
 hot-vscode-ghostty-test: hot-stop $(ZIG_INSTALL_STAMP)
 	@CODE_BIN="$(CODE_BIN)" ZIG_BIN="$(ZIG)" ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
 		bash "$(REPO_ROOT)/vendor/zig/tools/hot-vscode/test/vscode_ghostty_live_smoke.sh"
 .PHONY: hot-vscode-ghostty-test
 
 hot-compiler-test: $(ZIG_INSTALL_STAMP)
-	DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$$DYLD_LIBRARY_PATH" ./hot-compiler-test.sh
+	HOT_TEST_CLEAN="$(HOT_TEST_CLEAN)" DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$$DYLD_LIBRARY_PATH" ./hot-compiler-test.sh
 .PHONY: hot-compiler-test
+
+hot-compiler-test-clean: HOT_TEST_CLEAN=1
+hot-compiler-test-clean: hot-compiler-test
+.PHONY: hot-compiler-test-clean
 
 test-hot-all:
 	@bash -lc 'set -euo pipefail; \
 		log="/tmp/ghostty-test-hot-all.log"; \
+		suite_start=$$SECONDS; \
 		rm -f "$$log"; \
 		exec > >(tee "$$log") 2>&1; \
 		echo "log\t$$log"; \
-		"$(MAKE)" hot-compiler-test; \
-		"$(MAKE)" hot-test; \
-		"$(MAKE)" -C "$(TIGERBEETLE_DIR)" HOT_ZIG="$(ZIG)" HOT_ZIG_LIB_DIR="$(ZIG_LIB_DIR)" hot-test'
+		phase_start=$$SECONDS; \
+		"$(MAKE)" HOT_TEST_CLEAN="$(HOT_TEST_CLEAN)" hot-compiler-test; \
+		printf "time\t%s\t%ss\n" "test-hot-all:hot-compiler-test" "$$((SECONDS - phase_start))"; \
+		phase_start=$$SECONDS; \
+		"$(MAKE)" HOT_TEST_CLEAN="$(HOT_TEST_CLEAN)" hot-test; \
+		printf "time\t%s\t%ss\n" "test-hot-all:ghostty-hot-test" "$$((SECONDS - phase_start))"; \
+		phase_start=$$SECONDS; \
+		"$(MAKE)" -C "$(TIGERBEETLE_DIR)" HOT_TEST_CLEAN="$(HOT_TEST_CLEAN)" HOT_ZIG="$(ZIG)" HOT_ZIG_LIB_DIR="$(ZIG_LIB_DIR)" hot-test; \
+		printf "time\t%s\t%ss\n" "test-hot-all:tigerbeetle-hot-test" "$$((SECONDS - phase_start))"; \
+		printf "time\t%s\t%ss\n" "test-hot-all-total" "$$((SECONDS - suite_start))"'
 .PHONY: test-hot-all
+
+test-hot-all-clean: HOT_TEST_CLEAN=1
+test-hot-all-clean: test-hot-all
+.PHONY: test-hot-all-clean
 
 vendor-zig: vendor-zig-install
 .PHONY: vendor-zig

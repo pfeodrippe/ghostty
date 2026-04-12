@@ -32,6 +32,7 @@ prepend_lib_dir "$LIBXML2_PREFIX/lib"
 prepend_lib_dir "$ZLIB_PREFIX/lib"
 export ZIG_HOT_ZIG_BIN="$ZIG_BIN"
 SUITE_START=$SECONDS
+HOT_TEST_CLEAN="${HOT_TEST_CLEAN:-0}"
 
 clean_dir() {
   local path="$1"
@@ -40,14 +41,36 @@ clean_dir() {
   rm -rf "$path"
 }
 
-clean_dir "$ROOT_DIR/.zig-cache"
-while IFS= read -r path; do
-  [[ -n "$path" ]] || continue
-  clean_dir "$path"
-done < <(
-  find "$ROOT_DIR/vendor/zig/test/standalone" -mindepth 2 -maxdepth 2 -type d \
-    \( -name .zig-cache -o -name zig-out \) | sort
-)
+prune_runtime_path() {
+  local path="$1"
+  [[ -e "$path" ]] || return 0
+  printf 'clean\t%s\n' "$path"
+  rm -rf "$path"
+}
+
+if [[ "$HOT_TEST_CLEAN" == "1" ]]; then
+  clean_dir "$ROOT_DIR/.zig-cache"
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    clean_dir "$path"
+  done < <(
+    find "$ROOT_DIR/vendor/zig/test/standalone" -mindepth 2 -maxdepth 2 -type d \
+      \( -name .zig-cache -o -name zig-out \) | sort
+  )
+else
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    prune_runtime_path "$path"
+  done < <(
+    {
+      find "$ROOT_DIR/vendor/zig/test/standalone" \
+        \( -name '.nrepl-port' -o -name '.hot-run.log' -o -name '.hot-run.pid' -o \
+           -name '.hot-run.stdin' -o -name '.hot-run.stdin.pid' -o \
+           -name '.build.log' -o -name '*.build.log' -o -name '.vscode-smoke-hot-run.log' \) -print
+      find "$ROOT_DIR/vendor/zig/test/standalone" -path '*/zig-out/share/zig-hot/*.config' -print
+    } | sort -u
+  )
+fi
 
 run_test() {
   local file="$1"
@@ -78,6 +101,10 @@ while IFS= read -r script; do
   [[ -n "$script" ]] || continue
   run_smoke "$script"
 done < <(
-  find "$ROOT_DIR/vendor/zig/test/standalone" -mindepth 2 -maxdepth 2 -name 'hot-smoke-test.sh' | sort
+  # hot_specialization_reload only re-runs focused bundle/runtime/typed_thunk unit
+  # tests that already ran above via run_test, so keep it as a targeted manual
+  # runner instead of duplicating that cost inside the full umbrella.
+  find "$ROOT_DIR/vendor/zig/test/standalone" -mindepth 2 -maxdepth 2 -name 'hot-smoke-test.sh' \
+    ! -path "$ROOT_DIR/vendor/zig/test/standalone/hot_specialization_reload/hot-smoke-test.sh" | sort
 )
 printf 'time\t%s\t%ss\n' "hot-compiler-test-total" "$((SECONDS - SUITE_START))"
