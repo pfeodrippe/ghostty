@@ -3,11 +3,11 @@
   - [x] call some function
   - [x] tools/hot eval 'SOME ARBITRARY ZIG CODE', but for calls for the moment
 - [x] hot reload
-- [ ] vscode extension
+- [x] vscode extension
 - [ ] https://github.com/lightpanda-io/browser
 - [ ] https://github.com/neurocyte/flow
-- [ ] add flecs to be aware of all of that
 - [ ] quint support checking in the hot zig compiler
+- [ ] add flecs to be aware of all of that
 
 ## Old todo
 
