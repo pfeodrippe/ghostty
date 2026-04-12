@@ -14,6 +14,10 @@ SURFACE_HANDLE_CANDIDATES=(
   '@objc:NSApp.keyWindow.contentView//surfaceModel.asObject.surface'
   '@objc:NSApp.mainWindow.contentView//surfaceModel.asObject.surface'
 )
+RUN_ZIG_REL="src/font/shaper/run.zig"
+RUN_ZIG_FILE="$ROOT_DIR/$RUN_ZIG_REL"
+RUN_ZIG_BACKUP=""
+RUN_ZIG_RESTORE_NEEDED=0
 
 if [[ ! -x "$HOT_BIN" ]]; then
   echo "error: missing hot wrapper at $HOT_BIN" >&2
@@ -524,6 +528,106 @@ zig_hot() {
   )
 }
 
+ensure_run_zig_backup() {
+  if [[ -n "$RUN_ZIG_BACKUP" ]]; then
+    return 0
+  fi
+
+  mkdir -p "$ROOT_DIR/.zig-cache"
+  RUN_ZIG_BACKUP="$(mktemp "$ROOT_DIR/.zig-cache/hot-smoke-run-zig-XXXXXX")"
+  cp "$RUN_ZIG_FILE" "$RUN_ZIG_BACKUP"
+}
+
+restore_run_zig_source() {
+  [[ -n "$RUN_ZIG_BACKUP" ]] || return 0
+  cp "$RUN_ZIG_BACKUP" "$RUN_ZIG_FILE"
+  RUN_ZIG_RESTORE_NEEDED=0
+}
+
+cleanup() {
+  if (( RUN_ZIG_RESTORE_NEEDED != 0 )); then
+    restore_run_zig_source >/dev/null 2>&1 || true
+    if [[ -s "$PORT_FILE" ]]; then
+      zig_hot reload "$RUN_ZIG_REL" >/dev/null 2>&1 || true
+    fi
+  fi
+  if [[ -n "$RUN_ZIG_BACKUP" ]]; then
+    rm -f "$RUN_ZIG_BACKUP"
+  fi
+}
+trap cleanup EXIT INT TERM
+
+decl_range_in_file() {
+  local file="$1"
+  local pattern="$2"
+  local offset
+  offset="$(grep -aboF "$pattern" "$file" | head -n 1 | cut -d: -f1)"
+  if [[ -z "$offset" ]]; then
+    echo "error: unable to locate range for pattern: $pattern" >&2
+    exit 1
+  fi
+  printf '%s %s\n' "$offset" "$((offset + ${#pattern}))"
+}
+
+run_zig_next_range() {
+  decl_range_in_file "$RUN_ZIG_FILE" 'pub fn next'
+}
+
+run_zig_index_for_cell_range() {
+  decl_range_in_file "$RUN_ZIG_FILE" 'fn indexForCell'
+}
+
+patch_run_zig_next_probe() {
+  ensure_run_zig_backup
+  restore_run_zig_source
+  python3 - "$RUN_ZIG_FILE" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text()
+old = """            try self.addCodepoint(
+                &hasher,
+                if (cell.codepoint() == 0) ' ' else cell.codepoint(),
+                @intCast(cluster),
+            );
+"""
+new = """            try self.addCodepoint(
+                &hasher,
+                if (cell.codepoint() == 0) ' ' else if (cell.codepoint() == 'Z') '!' else cell.codepoint(),
+                @intCast(cluster),
+            );
+"""
+if old not in source:
+    raise SystemExit("error: missing RunIterator.next primary addCodepoint")
+path.write_text(source.replace(old, new, 1))
+PY
+  RUN_ZIG_RESTORE_NEEDED=1
+}
+
+patch_run_zig_index_for_cell_probe() {
+  ensure_run_zig_backup
+  restore_run_zig_source
+  python3 - "$RUN_ZIG_FILE" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text()
+old = """        const primary_cp: u32 = cell.codepoint();
+        const primary = try self.opts.grid.getIndex(
+"""
+new = """        const primary_cp: u32 = cell.codepoint();
+        if (primary_cp == 'Q') return null;
+        const primary = try self.opts.grid.getIndex(
+"""
+if old not in source:
+    raise SystemExit("error: missing RunIterator.indexForCell primary lookup")
+path.write_text(source.replace(old, new, 1))
+PY
+  RUN_ZIG_RESTORE_NEEDED=1
+}
+
 expect_contains() {
   local haystack="$1"
   local needle="$2"
@@ -794,6 +898,27 @@ expect_ghostty_ocr_contains() {
   exit 1
 }
 
+expect_ghostty_ocr_not_contains() {
+  local needle="$1"
+  local deadline=$((SECONDS + 30))
+  local ocr_output="" normalized_output normalized_needle
+  normalized_needle="$(printf '%s' "$needle" | normalize_ocr_text)"
+
+  while (( SECONDS < deadline )); do
+    activate_ghostty_app
+    ocr_output="$(ocr_ghostty_window 2>/dev/null || true)"
+    normalized_output="$(printf '%s' "$ocr_output" | normalize_ocr_text)"
+    if ! grep -Fq "$normalized_needle" <<<"$normalized_output"; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "error: timed out waiting for Ghostty OCR text to disappear: $needle" >&2
+  echo "$ocr_output" >&2
+  exit 1
+}
+
 paste_ghostty_text() {
   local text="$1"
   local paste_log_start ui_paste_output
@@ -1030,7 +1155,54 @@ addcp_body="$(zig_hot compile-body src/font/shaper/run.zig addCodepoint 2>&1 || 
 expect_contains "$addcp_body" "instructions:"
 echo "addCodepoint with visible_cp override compiles: OK"
 
-# Unassoc RunIterator.addCodepoint — restore original
+runiter_next_probe_text=$'clear\r# RUNITER_NEXTZAAA...BBB\r'
+paste_ghostty_text "$runiter_next_probe_text"
+expect_ghostty_ocr_contains "RUNITER_NEXTZAAA!!!BBB"
+
+patch_run_zig_next_probe
+read -r run_next_start run_next_end <<<"$(run_zig_next_range)"
+run_next_reload="$(zig_hot reload "$RUN_ZIG_REL" "$run_next_start" "$run_next_end" 2>&1)"
+expect_hot_success "$run_next_reload"
+expect_eval_value "ghostty_surface_process_exited($SURFACE_HANDLE)" "false"
+paste_ghostty_text "$runiter_next_probe_text"
+expect_ghostty_ocr_contains "RUNITER_NEXT!AAA!!!BBB"
+echo "reload RunIterator.next via live visible probe: OK"
+
+restore_run_zig_source
+run_next_restore="$(zig_hot reload "$RUN_ZIG_REL" "$run_next_start" "$run_next_end" 2>&1)"
+expect_hot_success "$run_next_restore"
+expect_eval_value "ghostty_surface_process_exited($SURFACE_HANDLE)" "false"
+paste_ghostty_text "$runiter_next_probe_text"
+expect_ghostty_ocr_contains "RUNITER_NEXTZAAA!!!BBB"
+echo "restore RunIterator.next source reload baseline: OK"
+
+runiter_index_probe_text=$'clear\r# RUNITER_INDEX_QQQ...BBB\r'
+paste_ghostty_text "$runiter_index_probe_text"
+expect_ghostty_ocr_contains "RUNITER_INDEX_QQQ!!!BBB"
+
+patch_run_zig_index_for_cell_probe
+read -r run_index_start run_index_end <<<"$(run_zig_index_for_cell_range)"
+run_index_reload="$(zig_hot reload "$RUN_ZIG_REL" "$run_index_start" "$run_index_end" 2>&1)"
+expect_hot_success "$run_index_reload"
+expect_contains "$run_index_reload" "decl=RunIterator.indexForCell;kind=function_decl"
+expect_eval_value "ghostty_surface_process_exited($SURFACE_HANDLE)" "false"
+paste_ghostty_text "$runiter_index_probe_text"
+expect_ghostty_ocr_contains "RUNITER_INDEX_"
+expect_ghostty_ocr_contains "!!!BBB"
+paste_ghostty_text "$runiter_next_probe_text"
+expect_ghostty_ocr_contains "RUNITER_NEXTZAAA!!!BBB"
+echo "reload RunIterator.indexForCell while addCodepoint specialization stays live: OK"
+
+restore_run_zig_source
+run_index_restore="$(zig_hot reload "$RUN_ZIG_REL" "$run_index_start" "$run_index_end" 2>&1)"
+expect_hot_success "$run_index_restore"
+expect_contains "$run_index_restore" "decl=RunIterator.indexForCell;kind=function_decl"
+expect_eval_value "ghostty_surface_process_exited($SURFACE_HANDLE)" "false"
+paste_ghostty_text "$runiter_index_probe_text"
+expect_ghostty_ocr_contains "RUNITER_INDEX_QQQ!!!BBB"
+echo "restore RunIterator.indexForCell source reload baseline: OK"
+
+# Unassoc RunIterator.addCodepoint — restore original after the composition proof
 dissoc_addcp="$(zig_hot dissoc RunIterator.addCodepoint 2>&1)"
 expect_contains "$dissoc_addcp" "done"
 expect_contains "$dissoc_addcp" "native: restored"

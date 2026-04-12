@@ -7,7 +7,7 @@
 - [ ] https://github.com/lightpanda-io/browser
 - [ ] https://github.com/neurocyte/flow
 - [ ] add flecs to be aware of all of that
-- [ ] vscode extension
+- [ ] quint support checking in the hot zig compiler
 
 ## Old todo
 
