@@ -286,11 +286,33 @@ test-hot-all:
 		"$(MAKE)" HOT_TEST_CLEAN="$(HOT_TEST_CLEAN)" hot-compiler-test; \
 		printf "time\t%s\t%ss\n" "test-hot-all:hot-compiler-test" "$$((SECONDS - phase_start))"; \
 		phase_start=$$SECONDS; \
-		"$(MAKE)" HOT_TEST_CLEAN="$(HOT_TEST_CLEAN)" hot-test; \
-		printf "time\t%s\t%ss\n" "test-hot-all:ghostty-hot-test" "$$((SECONDS - phase_start))"; \
-		phase_start=$$SECONDS; \
-		"$(MAKE)" -C "$(TIGERBEETLE_DIR)" HOT_TEST_CLEAN="$(HOT_TEST_CLEAN)" HOT_ZIG="$(ZIG)" HOT_ZIG_LIB_DIR="$(ZIG_LIB_DIR)" hot-test; \
-		printf "time\t%s\t%ss\n" "test-hot-all:tigerbeetle-hot-test" "$$((SECONDS - phase_start))"; \
+		ghost_log=$$(mktemp "$${TMPDIR:-/tmp}/ghostty-hot-test.XXXXXX"); \
+		ghost_time=$$(mktemp "$${TMPDIR:-/tmp}/ghostty-hot-time.XXXXXX"); \
+		tb_log=$$(mktemp "$${TMPDIR:-/tmp}/tigerbeetle-hot-test.XXXXXX"); \
+		tb_time=$$(mktemp "$${TMPDIR:-/tmp}/tigerbeetle-hot-time.XXXXXX"); \
+		( ghost_start=$$SECONDS; \
+		  "$(MAKE)" HOT_TEST_CLEAN="$(HOT_TEST_CLEAN)" hot-test >"$$ghost_log" 2>&1; \
+		  printf "%s\n" "$$((SECONDS - ghost_start))" >"$$ghost_time" ) & \
+		ghost_pid=$$!; \
+		( tb_start=$$SECONDS; \
+		  "$(MAKE)" -C "$(TIGERBEETLE_DIR)" HOT_TEST_CLEAN="$(HOT_TEST_CLEAN)" HOT_ZIG="$(ZIG)" HOT_ZIG_LIB_DIR="$(ZIG_LIB_DIR)" hot-test >"$$tb_log" 2>&1; \
+		  printf "%s\n" "$$((SECONDS - tb_start))" >"$$tb_time" ) & \
+		tb_pid=$$!; \
+		ghost_status=0; \
+		tb_status=0; \
+		wait "$$ghost_pid" || ghost_status=$$?; \
+		wait "$$tb_pid" || tb_status=$$?; \
+		cat "$$ghost_log"; \
+		cat "$$tb_log"; \
+		if [[ "$$ghost_status" -ne 0 || "$$tb_status" -ne 0 ]]; then \
+			rm -f "$$ghost_log" "$$ghost_time" "$$tb_log" "$$tb_time"; \
+			if [[ "$$ghost_status" -ne 0 ]]; then exit "$$ghost_status"; fi; \
+			exit "$$tb_status"; \
+		fi; \
+		printf "time\t%s\t%ss\n" "test-hot-all:ghostty-hot-test" "$$(cat "$$ghost_time")"; \
+		printf "time\t%s\t%ss\n" "test-hot-all:tigerbeetle-hot-test" "$$(cat "$$tb_time")"; \
+		printf "time\t%s\t%ss\n" "test-hot-all:downstream-hot-tests" "$$((SECONDS - phase_start))"; \
+		rm -f "$$ghost_log" "$$ghost_time" "$$tb_log" "$$tb_time"; \
 		printf "time\t%s\t%ss\n" "test-hot-all-total" "$$((SECONDS - suite_start))"'
 .PHONY: test-hot-all
 

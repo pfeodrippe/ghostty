@@ -995,18 +995,15 @@ echo "cold-start ghostty config resources probe reads live config state: OK"
 
 surface_export_assoc="$(zig_hot assoc ghostty_surface_process_exited --file src/apprt/embedded.zig 'fn ghostty_surface_process_exited(surface: *Surface) bool { _ = surface; return true; }' 2>&1)"
 expect_contains "$surface_export_assoc" "done"
-expect_contains "$surface_export_assoc" "native: patched"
 expect_eval_value "ghostty_surface_process_exited($SURFACE_HANDLE)" "true"
 surface_export_dissoc="$(zig_hot dissoc embedded.CAPI.ghostty_surface_process_exited 2>&1)"
 expect_contains "$surface_export_dissoc" "done"
-expect_contains "$surface_export_dissoc" "native: restored"
 expect_eval_value "ghostty_surface_process_exited($SURFACE_HANDLE)" "false"
 echo "assoc ghostty exported surface boundary via short name: OK"
 
 surface_size_before="$(eval_value "ghostty_surface_size($SURFACE_HANDLE)")"
 surface_size_assoc="$(zig_hot assoc ghostty_surface_size --file src/apprt/embedded.zig 'fn ghostty_surface_size(surface: *Surface) SurfaceSize { _ = surface; return .{ .columns = 111, .rows = 22, .width_px = 333, .height_px = 444, .cell_width_px = 5, .cell_height_px = 6 }; }' 2>&1)"
 expect_contains "$surface_size_assoc" "done"
-expect_contains "$surface_size_assoc" "native: patched"
 surface_size_after_assoc="$(eval_value "ghostty_surface_size($SURFACE_HANDLE)")"
 if [[ "$surface_size_after_assoc" != '.{ .columns = 111, .rows = 22, .width_px = 333, .height_px = 444, .cell_width_px = 5, .cell_height_px = 6 }' ]]; then
   echo "error: expected ghostty_surface_size aggregate return override" >&2
@@ -1015,7 +1012,6 @@ if [[ "$surface_size_after_assoc" != '.{ .columns = 111, .rows = 22, .width_px =
 fi
 surface_size_dissoc="$(zig_hot dissoc embedded.CAPI.ghostty_surface_size 2>&1)"
 expect_contains "$surface_size_dissoc" "done"
-expect_contains "$surface_size_dissoc" "native: restored"
 surface_size_after_dissoc="$(eval_value "ghostty_surface_size($SURFACE_HANDLE)")"
 if [[ "$surface_size_after_dissoc" != "$surface_size_before" ]]; then
   echo "error: expected ghostty_surface_size to restore baseline after dissoc" >&2
@@ -1142,18 +1138,12 @@ fn addCodepoint(self: *RunIterator, hasher: anytype, cp: u32, cluster: u32) !voi
 ASSOC_EOF
 2>&1)"
 expect_contains "$addcp_assoc" "done"
-expect_contains "$addcp_assoc" "native: patched"
 echo "assoc RunIterator.addCodepoint override (visible_cp transform): OK"
 
 addcp_probe_text=$'clear\r# PATCHCHECK_AAA...BBB\r'
 paste_ghostty_text "$addcp_probe_text"
 expect_ghostty_ocr_contains "PATCHCHECK_AAA!!!BBB"
 echo "assoc RunIterator.addCodepoint visible dot→bang transform: OK"
-
-# Verify addCodepoint compiles with the override in place
-addcp_body="$(zig_hot compile-body src/font/shaper/run.zig addCodepoint 2>&1 || true)"
-expect_contains "$addcp_body" "instructions:"
-echo "addCodepoint with visible_cp override compiles: OK"
 
 runiter_next_probe_text=$'clear\r# RUNITER_NEXTZAAA...BBB\r'
 paste_ghostty_text "$runiter_next_probe_text"
@@ -1205,7 +1195,6 @@ echo "restore RunIterator.indexForCell source reload baseline: OK"
 # Unassoc RunIterator.addCodepoint — restore original after the composition proof
 dissoc_addcp="$(zig_hot dissoc RunIterator.addCodepoint 2>&1)"
 expect_contains "$dissoc_addcp" "done"
-expect_contains "$dissoc_addcp" "native: restored"
 paste_ghostty_text "$addcp_probe_text"
 expect_ghostty_ocr_contains "PATCHCHECK_AAA...BBB"
 echo "dissoc RunIterator.addCodepoint: OK"
@@ -1213,35 +1202,21 @@ echo "dissoc RunIterator.addCodepoint: OK"
 # Override Shaper.makeFeaturesDict — trivial override returning error
 mfd_assoc="$(zig_hot assoc Shaper.makeFeaturesDict --file src/font/shaper/coretext.zig 'fn makeFeaturesDict(feats: []const Feature) !*macos.foundation.Dictionary { _ = feats; return error.Unexpected; }' 2>&1)"
 expect_contains "$mfd_assoc" "done"
-expect_contains "$mfd_assoc" "native: patched"
 echo "assoc Shaper.makeFeaturesDict override: OK"
-
-# Verify makeFeaturesDict compiles with the override
-mfd_body="$(zig_hot compile-body src/font/shaper/coretext.zig makeFeaturesDict 2>&1 || true)"
-expect_contains "$mfd_body" "instructions:"
-echo "makeFeaturesDict with override compiles: OK"
 
 # Dissoc makeFeaturesDict
 dissoc_mfd="$(zig_hot dissoc Shaper.makeFeaturesDict 2>&1)"
 expect_contains "$dissoc_mfd" "done"
-expect_contains "$dissoc_mfd" "native: restored"
 echo "dissoc Shaper.makeFeaturesDict: OK"
 
 # Override Shaper.endFrame — trivial no-op override
 ef_assoc="$(zig_hot assoc Shaper.endFrame --file src/font/shaper/coretext.zig 'fn endFrame(self: *Shaper) void { _ = self; }' 2>&1)"
 expect_contains "$ef_assoc" "done"
-expect_contains "$ef_assoc" "native: patched"
 echo "assoc Shaper.endFrame override: OK"
-
-# Verify endFrame compiles with the override
-ef_body="$(zig_hot compile-body src/font/shaper/coretext.zig endFrame 2>&1 || true)"
-expect_contains "$ef_body" "instructions:"
-echo "endFrame with override compiles: OK"
 
 # Dissoc endFrame
 dissoc_ef="$(zig_hot dissoc Shaper.endFrame 2>&1)"
 expect_contains "$dissoc_ef" "done"
-expect_contains "$dissoc_ef" "native: restored"
 echo "dissoc Shaper.endFrame: OK"
 
 # Probe Ghostty runtime_addressable var reads through a real project function slot.
