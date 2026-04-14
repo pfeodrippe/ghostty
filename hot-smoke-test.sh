@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOT_BIN="${HOT_BIN:-$ROOT_DIR/tools/hot}"
 ZIG_BIN="${ZIG_BIN:-$ROOT_DIR/.zig-toolchain/zig-0.15.2/bin/zig}"
+HOT_CACHE_DIR="${HOT_CACHE_DIR:-$ROOT_DIR/.zig-cache}"
+HOT_CONFIG_FILE="${HOT_CONFIG_FILE:-$HOT_CACHE_DIR/hot/ghostty.config}"
 PORT_FILE="${PORT_FILE:-$ROOT_DIR/.nrepl-port}"
 HOT_LOG="${HOT_LOG:-$ROOT_DIR/.hot-run.log}"
 GHOSTTY_BIN_PATTERN="${GHOSTTY_BIN_PATTERN:-macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty}"
@@ -171,7 +173,7 @@ run_eval() {
 }
 
 validate_decl_graph_config() {
-  local config_path="$ROOT_DIR/.zig-cache/hot/ghostty.config"
+  local config_path="$HOT_CONFIG_FILE"
   if [[ ! -f "$config_path" ]]; then
     echo "error: missing generated hot config at $config_path" >&2
     exit 1
@@ -202,7 +204,7 @@ validate_decl_graph_config() {
 }
 
 validate_decl_graph_semantic_edges() {
-  local config_path="$ROOT_DIR/.zig-cache/hot/ghostty.config"
+  local config_path="$HOT_CONFIG_FILE"
   local run_file="$ROOT_DIR/src/font/shaper/run.zig"
   local shape_file="$ROOT_DIR/src/font/shape.zig"
   local coretext_file="$ROOT_DIR/src/font/shaper/coretext.zig"
@@ -533,8 +535,8 @@ ensure_run_zig_backup() {
     return 0
   fi
 
-  mkdir -p "$ROOT_DIR/.zig-cache"
-  RUN_ZIG_BACKUP="$(mktemp "$ROOT_DIR/.zig-cache/hot-smoke-run-zig-XXXXXX")"
+  mkdir -p "$HOT_CACHE_DIR"
+  RUN_ZIG_BACKUP="$(mktemp "$HOT_CACHE_DIR/hot-smoke-run-zig-XXXXXX")"
   cp "$RUN_ZIG_FILE" "$RUN_ZIG_BACKUP"
 }
 

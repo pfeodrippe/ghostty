@@ -11,7 +11,10 @@ ZIG_VERSION_STRING ?= 0.15.2-dev.0+ghosttyhot
 HOT_LOG := $(REPO_ROOT)/.hot-run.log
 HOT_PID := $(REPO_ROOT)/.hot-run.pid
 HOT_PORT_FILE := $(REPO_ROOT)/.nrepl-port
-HOT_CONFIG_FILE := $(REPO_ROOT)/.zig-cache/hot/ghostty.config
+HOT_BUILD_CACHE_DIR ?= $(REPO_ROOT)/.zig-hot-build-cache
+HOT_GLOBAL_CACHE_DIR ?= $(REPO_ROOT)/.zig-hot-global-cache
+HOT_ZIG_CACHE_ARGS := --cache-dir "$(HOT_BUILD_CACHE_DIR)" --global-cache-dir "$(HOT_GLOBAL_CACHE_DIR)"
+HOT_CONFIG_FILE := $(HOT_BUILD_CACHE_DIR)/hot/ghostty.config
 HOT_TEST_CLEAN ?= 0
 TIGERBEETLE_DIR ?= $(abspath vendor/tigerbeetle)
 CODE_BIN ?= code
@@ -219,11 +222,12 @@ hot-stop:
 hot-run: hot-stop $(ZIG_INSTALL_STAMP)
 	@mkdir -p "$(dir $(HOT_LOG))"
 	@bash -lc 'set -euo pipefail; \
+		mkdir -p "$(HOT_BUILD_CACHE_DIR)" "$(HOT_GLOBAL_CACHE_DIR)"; \
 		rm -f "$(HOT_LOG)" "$(HOT_PID)" "$(HOT_PORT_FILE)" "$(HOT_CONFIG_FILE)"; \
 		nohup env \
 			DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$${DYLD_LIBRARY_PATH:-}" \
 			ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
-			"$(ZIG)" build run -Dhot=true $(GHOSTTY_RUN_ARGS) >"$(HOT_LOG)" 2>&1 & \
+			"$(ZIG)" build $(HOT_ZIG_CACHE_ARGS) run -Dhot=true $(GHOSTTY_RUN_ARGS) >"$(HOT_LOG)" 2>&1 & \
 		run_pid=$$!; \
 		echo "$$run_pid" >"$(HOT_PID)"; \
 		tail -f "$(HOT_LOG)" & \
@@ -245,16 +249,22 @@ hot-test: hot-stop $(ZIG_INSTALL_STAMP)
 				rm -rf "$$path"; \
 			fi; \
 		}; \
-		if [ "$(HOT_TEST_CLEAN)" = "1" ]; then clean_dir .zig-cache; fi; \
+		if [ "$(HOT_TEST_CLEAN)" = "1" ]; then \
+			clean_dir "$(HOT_BUILD_CACHE_DIR)"; \
+			clean_dir "$(HOT_GLOBAL_CACHE_DIR)"; \
+		fi; \
+		mkdir -p "$(HOT_BUILD_CACHE_DIR)" "$(HOT_GLOBAL_CACHE_DIR)"; \
 		rm -f "$(HOT_LOG)" "$(HOT_PID)" "$(HOT_PORT_FILE)" "$(HOT_CONFIG_FILE)"; \
 		cleanup() { "$(MAKE)" hot-stop >/dev/null 2>&1 || true; }; \
 		trap cleanup EXIT INT TERM; \
 		nohup env \
 			DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$${DYLD_LIBRARY_PATH:-}" \
 			ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
-			"$(ZIG)" build run -Dhot=true $(GHOSTTY_RUN_ARGS) >"$(HOT_LOG)" 2>&1 & \
+			"$(ZIG)" build $(HOT_ZIG_CACHE_ARGS) run -Dhot=true $(GHOSTTY_RUN_ARGS) >"$(HOT_LOG)" 2>&1 & \
 		run_pid=$$!; \
 		echo "$$run_pid" >"$(HOT_PID)"; \
+		HOT_CACHE_DIR="$(HOT_BUILD_CACHE_DIR)" \
+		HOT_CONFIG_FILE="$(HOT_CONFIG_FILE)" \
 		./hot-smoke-test.sh'
 .PHONY: hot-test
 
