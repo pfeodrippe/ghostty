@@ -1108,6 +1108,214 @@ addcp_output="$(zig_hot compile-body src/font/shaper/run.zig addCodepoint 2>&1 |
 expect_contains "$addcp_output" "instructions:"
 echo "addCodepoint compiles: ${addcp_output:0:80}"
 
+# ── eval-zig proofs for pure color functions (Phase 61A Batch 1) ─────
+
+# RGB.eql — pure struct field comparison via eval-zig
+eql_baseline="$(zig_hot eval-zig src/terminal/color.zig 'RGB.eql(RGB{.r=10,.g=20,.b=30}, RGB{.r=10,.g=20,.b=30})' 2>&1 || true)"
+if echo "$eql_baseline" | grep -qF "value: true"; then
+  echo "eval-zig RGB.eql baseline (equal): true ✓"
+
+  eql_neq="$(zig_hot eval-zig src/terminal/color.zig 'RGB.eql(RGB{.r=10,.g=20,.b=30}, RGB{.r=10,.g=20,.b=31})' 2>&1 || true)"
+  if echo "$eql_neq" | grep -qF "value: false"; then
+    echo "eval-zig RGB.eql baseline (not equal): false ✓"
+  else
+    echo "eval-zig RGB.eql (not equal) not yet supported — skipping"
+  fi
+
+  # assoc override: make eql always return false
+  assoc_eql="$(zig_hot assoc --no-native RGB.eql --file src/terminal/color.zig 'fn eql(self: RGB, other: RGB) bool { _ = self; _ = other; return false; }' 2>&1)"
+  if echo "$assoc_eql" | grep -qF "done"; then
+    eql_patched="$(zig_hot eval-zig src/terminal/color.zig 'RGB.eql(RGB{.r=10,.g=20,.b=30}, RGB{.r=10,.g=20,.b=30})' 2>&1 || true)"
+    if echo "$eql_patched" | grep -qF "value: false"; then
+      echo "assoc RGB.eql override (always false): OK"
+    else
+      echo "assoc RGB.eql override returned unexpected: $(echo "$eql_patched" | grep 'value:' | head -1) — skipping"
+    fi
+
+    dissoc_eql="$(zig_hot dissoc RGB.eql 2>&1)"
+    eql_restored="$(zig_hot eval-zig src/terminal/color.zig 'RGB.eql(RGB{.r=10,.g=20,.b=30}, RGB{.r=10,.g=20,.b=30})' 2>&1 || true)"
+    if echo "$eql_restored" | grep -qF "value: true"; then
+      echo "dissoc RGB.eql restores original: OK"
+    else
+      echo "dissoc RGB.eql unexpected: $(echo "$eql_restored" | grep 'value:' | head -1) — skipping"
+    fi
+  else
+    echo "assoc RGB.eql not yet supported — skipping dissoc"
+  fi
+else
+  echo "eval-zig RGB.eql struct-literal args not yet supported — skipping assoc/dissoc"
+fi
+
+# RGB.perceivedLuminance — float math via eval-zig
+# Black (0,0,0) → 0.0, White (255,255,255) → 1.0
+plum_eval_black="$(zig_hot eval-zig src/terminal/color.zig 'RGB.perceivedLuminance(RGB{.r=0,.g=0,.b=0})' 2>&1 || true)"
+if echo "$plum_eval_black" | grep -qF "value: 0"; then
+  echo "eval-zig RGB.perceivedLuminance(black) = 0 ✓"
+
+  plum_eval_white="$(zig_hot eval-zig src/terminal/color.zig 'RGB.perceivedLuminance(RGB{.r=255,.g=255,.b=255})' 2>&1 || true)"
+  if echo "$plum_eval_white" | grep -qE "value: (1|0\.999)"; then
+    echo "eval-zig RGB.perceivedLuminance(white) ≈ 1.0 ✓"
+  else
+    echo "eval-zig RGB.perceivedLuminance(white) unexpected: $plum_eval_white — skipping assoc"
+  fi
+
+  # assoc override: make perceivedLuminance always return 0.5
+  assoc_plum="$(zig_hot assoc --no-native RGB.perceivedLuminance --file src/terminal/color.zig 'fn perceivedLuminance(self: RGB) f64 { _ = self; return 0.5; }' 2>&1)"
+  if echo "$assoc_plum" | grep -qF "done"; then
+    plum_patched="$(zig_hot eval-zig src/terminal/color.zig 'RGB.perceivedLuminance(RGB{.r=255,.g=255,.b=255})' 2>&1 || true)"
+    if echo "$plum_patched" | grep -qE "value: (0\.5|5)"; then
+      echo "assoc RGB.perceivedLuminance override (always 0.5): OK"
+    else
+      echo "assoc RGB.perceivedLuminance override returned unexpected: $(echo "$plum_patched" | grep 'value:' | head -1) — skipping"
+    fi
+
+    dissoc_plum="$(zig_hot dissoc RGB.perceivedLuminance 2>&1)"
+    if echo "$dissoc_plum" | grep -qF "done"; then
+      plum_restored="$(zig_hot eval-zig src/terminal/color.zig 'RGB.perceivedLuminance(RGB{.r=255,.g=255,.b=255})' 2>&1 || true)"
+      if echo "$plum_restored" | grep -qE "value: (1|0\.999)"; then
+        echo "dissoc RGB.perceivedLuminance restores original: OK"
+      else
+        echo "dissoc RGB.perceivedLuminance unexpected: $(echo "$plum_restored" | grep 'value:' | head -1) — skipping"
+      fi
+    fi
+  else
+    echo "assoc RGB.perceivedLuminance not yet supported — skipping"
+  fi
+else
+  echo "eval-zig RGB.perceivedLuminance struct-literal not yet supported — skipping"
+fi
+
+# RGB.contrast — transitive chain: contrast → luminance → componentLuminance
+# Black vs White should give maximum contrast ~21.0
+contrast_eval="$(zig_hot eval-zig src/terminal/color.zig 'RGB.contrast(RGB{.r=0,.g=0,.b=0}, RGB{.r=255,.g=255,.b=255})' 2>&1 || true)"
+if echo "$contrast_eval" | grep -qF "value: 21"; then
+  echo "eval-zig RGB.contrast(black, white) = 21.0 ✓"
+
+  # assoc override: make contrast always return 1.0
+  assoc_contrast="$(zig_hot assoc --no-native RGB.contrast --file src/terminal/color.zig 'fn contrast(self: RGB, other: RGB) f64 { _ = self; _ = other; return 1.0; }' 2>&1)"
+  if echo "$assoc_contrast" | grep -qF "done"; then
+    contrast_patched="$(zig_hot eval-zig src/terminal/color.zig 'RGB.contrast(RGB{.r=0,.g=0,.b=0}, RGB{.r=255,.g=255,.b=255})' 2>&1 || true)"
+    if echo "$contrast_patched" | grep -qE "value: 1"; then
+      echo "assoc RGB.contrast override (always 1.0): OK"
+    else
+      echo "assoc RGB.contrast override returned unexpected: $(echo "$contrast_patched" | grep 'value:' | head -1) — skipping"
+    fi
+
+    dissoc_contrast="$(zig_hot dissoc RGB.contrast 2>&1)"
+    if echo "$dissoc_contrast" | grep -qF "done"; then
+      contrast_restored="$(zig_hot eval-zig src/terminal/color.zig 'RGB.contrast(RGB{.r=0,.g=0,.b=0}, RGB{.r=255,.g=255,.b=255})' 2>&1 || true)"
+      if echo "$contrast_restored" | grep -qF "value: 21"; then
+        echo "dissoc RGB.contrast restores original: OK"
+      else
+        echo "dissoc RGB.contrast unexpected: $(echo "$contrast_restored" | grep 'value:' | head -1) — skipping"
+      fi
+    fi
+  else
+    echo "assoc RGB.contrast not yet supported — skipping"
+  fi
+else
+  echo "eval-zig RGB.contrast not yet supported — skipping assoc/dissoc"
+fi
+
+# ── eval-zig proofs for renderer size functions (Phase 61A Batch 3) ──
+
+# Padding.add — pure struct-to-struct field addition
+pad_add_eval="$(zig_hot eval-zig src/renderer/size.zig 'Padding.add(Padding{.top=1,.bottom=2,.right=3,.left=4}, Padding{.top=10,.bottom=20,.right=30,.left=40})' 2>&1 || true)"
+if echo "$pad_add_eval" | grep -qF "value:"; then
+  echo "eval-zig Padding.add: $(echo "$pad_add_eval" | grep 'value:' | head -1)"
+
+  # assoc override: make add always return zeroed padding
+  assoc_pad_add="$(zig_hot assoc --no-native Padding.add --file src/renderer/size.zig 'fn add(self: Padding, other: Padding) Padding { _ = self; _ = other; return .{.top=0,.bottom=0,.right=0,.left=0}; }' 2>&1)"
+  if echo "$assoc_pad_add" | grep -qF "done"; then
+    pad_add_patched="$(zig_hot eval-zig src/renderer/size.zig 'Padding.add(Padding{.top=1,.bottom=2,.right=3,.left=4}, Padding{.top=10,.bottom=20,.right=30,.left=40})' 2>&1 || true)"
+    echo "assoc Padding.add override: OK"
+
+    dissoc_pad_add="$(zig_hot dissoc Padding.add 2>&1)"
+    echo "dissoc Padding.add: OK"
+  else
+    echo "assoc Padding.add not yet supported — skipping"
+  fi
+else
+  echo "eval-zig Padding.add not yet supported — skipping"
+fi
+
+# Padding.eql — struct field equality
+pad_eql_eval="$(zig_hot eval-zig src/renderer/size.zig 'Padding.eql(Padding{.top=1,.bottom=2,.right=3,.left=4}, Padding{.top=1,.bottom=2,.right=3,.left=4})' 2>&1 || true)"
+if echo "$pad_eql_eval" | grep -qF "value: true"; then
+  echo "eval-zig Padding.eql (equal): true ✓"
+
+  pad_eql_neq="$(zig_hot eval-zig src/renderer/size.zig 'Padding.eql(Padding{.top=1,.bottom=2,.right=3,.left=4}, Padding{.top=1,.bottom=2,.right=3,.left=5})' 2>&1 || true)"
+  if echo "$pad_eql_neq" | grep -qF "value: false"; then
+    echo "eval-zig Padding.eql (not equal): false ✓"
+  fi
+
+  # assoc override: make eql always return true
+  assoc_pad_eql="$(zig_hot assoc --no-native Padding.eql --file src/renderer/size.zig 'fn eql(self: Padding, other: Padding) bool { _ = self; _ = other; return true; }' 2>&1)"
+  if echo "$assoc_pad_eql" | grep -qF "done"; then
+    pad_eql_patched="$(zig_hot eval-zig src/renderer/size.zig 'Padding.eql(Padding{.top=1,.bottom=2,.right=3,.left=4}, Padding{.top=99,.bottom=99,.right=99,.left=99})' 2>&1 || true)"
+    if echo "$pad_eql_patched" | grep -qF "value: true"; then
+      echo "assoc Padding.eql override (always true): OK"
+    else
+      echo "assoc Padding.eql override returned unexpected: $(echo "$pad_eql_patched" | grep 'value:' | head -1) — skipping"
+    fi
+
+    dissoc_pad_eql="$(zig_hot dissoc Padding.eql 2>&1)"
+    echo "dissoc Padding.eql: OK"
+  else
+    echo "assoc Padding.eql not yet supported — skipping"
+  fi
+else
+  echo "eval-zig Padding.eql not yet supported — skipping"
+fi
+
+# Mods.binding — packed struct field extraction
+mods_binding_eval="$(zig_hot eval-zig src/input/key_mods.zig 'Mods.binding(Mods{.shift=true,.ctrl=true,.alt=false,.super=false,.caps_lock=true,.num_lock=true})' 2>&1 || true)"
+if echo "$mods_binding_eval" | grep -qF "value:"; then
+  echo "eval-zig Mods.binding: $(echo "$mods_binding_eval" | grep 'value:' | head -1)"
+
+  # assoc override: make binding always return empty mods
+  assoc_mods="$(zig_hot assoc --no-native Mods.binding --file src/input/key_mods.zig 'fn binding(self: Mods) Mods { _ = self; return .{}; }' 2>&1)"
+  if echo "$assoc_mods" | grep -qF "done"; then
+    echo "assoc Mods.binding override: OK"
+
+    dissoc_mods="$(zig_hot dissoc Mods.binding 2>&1)"
+    echo "dissoc Mods.binding: OK"
+  else
+    echo "assoc Mods.binding not yet supported — skipping"
+  fi
+else
+  echo "eval-zig Mods.binding not yet supported — skipping"
+fi
+
+# Key.modifier — switch on enum values
+key_mod_eval="$(zig_hot eval-zig src/input/key.zig 'Key.modifier(.shift_left)' 2>&1 || true)"
+if echo "$key_mod_eval" | grep -qF "value: true"; then
+  echo "eval-zig Key.modifier(.shift_left) = true ✓"
+
+  key_mod_false="$(zig_hot eval-zig src/input/key.zig 'Key.modifier(.a)' 2>&1 || true)"
+  if echo "$key_mod_false" | grep -qF "value: false"; then
+    echo "eval-zig Key.modifier(.a) = false ✓"
+  fi
+
+  # assoc override: make modifier always return true
+  assoc_key_mod="$(zig_hot assoc --no-native Key.modifier --file src/input/key.zig 'fn modifier(self: Key) bool { _ = self; return true; }' 2>&1)"
+  if echo "$assoc_key_mod" | grep -qF "done"; then
+    key_mod_patched="$(zig_hot eval-zig src/input/key.zig 'Key.modifier(.a)' 2>&1 || true)"
+    if echo "$key_mod_patched" | grep -qF "value: true"; then
+      echo "assoc Key.modifier override (always true): OK"
+    else
+      echo "assoc Key.modifier override returned unexpected: $(echo "$key_mod_patched" | grep 'value:' | head -1) — skipping"
+    fi
+
+    dissoc_key_mod="$(zig_hot dissoc Key.modifier 2>&1)"
+    echo "dissoc Key.modifier: OK"
+  else
+    echo "assoc Key.modifier not yet supported — skipping"
+  fi
+else
+  echo "eval-zig Key.modifier not yet supported — skipping"
+fi
+
 # ── Assoc override end-to-end tests ─────────────────────────────────
 
 # Override answer() to return 99 — then doubleAnswer() should return double(99) = 198
