@@ -49,6 +49,7 @@ ifneq ($(wildcard $(ZIG_SOURCE_DIR)/CMakeLists.txt),)
 # ZIG_LIB_DIR during `zig build` and should not force a staged reinstall.
 ZIG_BUILD_PREREQS := $(addprefix $(ZIG_SOURCE_DIR)/,$(shell cd "$(ZIG_SOURCE_DIR)" && git ls-files CMakeLists.txt cmake src stage1 stage2))
 ZIG_INSTALL_PREREQS := $(filter-out \
+	$(ZIG_SOURCE_DIR)/lib/hot_test_suite.zig \
 	$(ZIG_SOURCE_DIR)/lib/std/Build.zig \
 	$(ZIG_SOURCE_DIR)/lib/std/Build/% \
 	$(ZIG_SOURCE_DIR)/lib/compiler/hot/% \
@@ -278,12 +279,28 @@ hot-vscode-ghostty-test: hot-stop $(ZIG_INSTALL_STAMP)
 .PHONY: hot-vscode-ghostty-test
 
 hot-compiler-test: $(ZIG_INSTALL_STAMP)
-	HOT_TEST_CLEAN="$(HOT_TEST_CLEAN)" DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$$DYLD_LIBRARY_PATH" ./hot-compiler-test.sh
+	HOT_TEST_CLEAN="$(HOT_TEST_CLEAN)" HOT_SMOKE_JOBS="$(HOT_SMOKE_JOBS)" HOT_COMPILER_TEST_FILTER="$(HOT_COMPILER_TEST_FILTER)" HOT_COMPILER_SKIP_SMOKES="$(HOT_COMPILER_SKIP_SMOKES)" DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$$DYLD_LIBRARY_PATH" ./hot-compiler-test.sh
 .PHONY: hot-compiler-test
 
 hot-compiler-test-clean: HOT_TEST_CLEAN=1
 hot-compiler-test-clean: hot-compiler-test
 .PHONY: hot-compiler-test-clean
+
+# Fast inner loop: aggregated hot compiler suite only, no standalone runtime smokes.
+hot-compiler-unit-test: $(ZIG_INSTALL_STAMP)
+	HOT_TEST_CLEAN="$(HOT_TEST_CLEAN)" HOT_SMOKE_JOBS="$(HOT_SMOKE_JOBS)" HOT_COMPILER_TEST_FILTER="$(HOT_COMPILER_TEST_FILTER)" HOT_COMPILER_SKIP_SMOKES=1 DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$$DYLD_LIBRARY_PATH" ./hot-compiler-test.sh
+.PHONY: hot-compiler-unit-test
+
+hot-compiler-unit-test-clean: HOT_TEST_CLEAN=1
+hot-compiler-unit-test-clean: hot-compiler-unit-test
+.PHONY: hot-compiler-unit-test-clean
+
+test-hot-fast: hot-compiler-unit-test
+.PHONY: test-hot-fast
+
+test-hot-fast-clean: HOT_TEST_CLEAN=1
+test-hot-fast-clean: test-hot-fast
+.PHONY: test-hot-fast-clean
 
 test-hot-all:
 	@bash -lc 'set -euo pipefail; \

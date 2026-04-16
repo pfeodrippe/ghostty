@@ -33,6 +33,18 @@ prepend_lib_dir "$ZLIB_PREFIX/lib"
 export ZIG_HOT_ZIG_BIN="$ZIG_BIN"
 SUITE_START=$SECONDS
 HOT_TEST_CLEAN="${HOT_TEST_CLEAN:-0}"
+HOT_COMPILER_SUITE="${HOT_COMPILER_SUITE:-$ROOT_DIR/vendor/zig/lib/compiler/hot/test_suite.zig}"
+HOT_COMPILER_BUILD_CACHE_DIR="${HOT_COMPILER_BUILD_CACHE_DIR:-$ROOT_DIR/.zig-hot-compiler-build-cache}"
+HOT_COMPILER_GLOBAL_CACHE_DIR="${HOT_COMPILER_GLOBAL_CACHE_DIR:-$ROOT_DIR/.zig-hot-compiler-global-cache}"
+HOT_COMPILER_TEST_FILTER="${HOT_COMPILER_TEST_FILTER:-}"
+HOT_COMPILER_SKIP_SMOKES="${HOT_COMPILER_SKIP_SMOKES:-}"
+if [[ -z "$HOT_COMPILER_SKIP_SMOKES" ]]; then
+  if [[ -n "$HOT_COMPILER_TEST_FILTER" ]]; then
+    HOT_COMPILER_SKIP_SMOKES=1
+  else
+    HOT_COMPILER_SKIP_SMOKES=0
+  fi
+fi
 # These standalone hot smokes can be run in parallel, but cold hot-run builds
 # can be memory-hungry. Keep the default serial unless the caller opts in.
 HOT_SMOKE_JOBS="${HOT_SMOKE_JOBS:-1}"
@@ -59,6 +71,8 @@ prune_runtime_path() {
 }
 
 if [[ "$HOT_TEST_CLEAN" == "1" ]]; then
+  clean_dir "$HOT_COMPILER_BUILD_CACHE_DIR"
+  clean_dir "$HOT_COMPILER_GLOBAL_CACHE_DIR"
   clean_dir "$ROOT_DIR/.zig-cache"
   while IFS= read -r path; do
     [[ -n "$path" ]] || continue
@@ -82,11 +96,21 @@ else
   )
 fi
 
+mkdir -p "$HOT_COMPILER_BUILD_CACHE_DIR" "$HOT_COMPILER_GLOBAL_CACHE_DIR"
+
 run_test() {
   local file="$1"
   local start=$SECONDS
+  local -a zig_args=(
+    test "$file"
+    --cache-dir "$HOT_COMPILER_BUILD_CACHE_DIR"
+    --global-cache-dir "$HOT_COMPILER_GLOBAL_CACHE_DIR"
+  )
+  if [[ -n "$HOT_COMPILER_TEST_FILTER" ]]; then
+    zig_args+=(--test-filter "$HOT_COMPILER_TEST_FILTER")
+  fi
   echo "==> $file"
-  ZIG_LIB_DIR="$ZIG_LIB_DIR" "$ZIG_BIN" test "$file"
+  ZIG_LIB_DIR="$ZIG_LIB_DIR" "$ZIG_BIN" "${zig_args[@]}"
   printf 'time\t%s\t%ss\n' "$file" "$((SECONDS - start))"
 }
 
@@ -181,30 +205,26 @@ run_smokes_parallel() {
   return "$failure"
 }
 
-while IFS= read -r file; do
-  [[ -n "$file" ]] || continue
-  run_test "$file"
-done < <(
-  grep -E -l '^test([[:space:]]+"|[[:space:]]*\{)' \
-    "$ROOT_DIR"/vendor/zig/lib/compiler/hot/*.zig || true
-)
+run_test "$HOT_COMPILER_SUITE"
 
-run_test "$ROOT_DIR/vendor/zig/lib/std/std.zig"
-
-smoke_scripts=()
-while IFS= read -r script; do
-  [[ -n "$script" ]] || continue
-  smoke_scripts+=("$script")
-done < <(
-  # hot_specialization_reload only re-runs focused bundle/runtime/typed_thunk unit
-  # tests that already ran above via run_test, so keep it out of the full umbrella.
-  # The merged hot_specialization_suite replaces the legacy per-shape
-  # hot_specialization_* standalones so they share one hot-run startup.
-  {
-    find "$ROOT_DIR/vendor/zig/test/standalone" -mindepth 2 -maxdepth 2 -name 'hot-smoke-test.sh' \
-      ! -path "$ROOT_DIR/vendor/zig/test/standalone/hot_specialization_*/hot-smoke-test.sh"
-    printf '%s\n' "$ROOT_DIR/vendor/zig/test/standalone/hot_specialization_suite/hot-smoke-test.sh"
-  } | sort
-)
-run_smokes_parallel "$HOT_SMOKE_JOBS" "${smoke_scripts[@]}"
+if [[ "$HOT_COMPILER_SKIP_SMOKES" == "1" ]]; then
+  printf 'skip\t%s\n' "standalone hot smoke tests"
+else
+  smoke_scripts=()
+  while IFS= read -r script; do
+    [[ -n "$script" ]] || continue
+    smoke_scripts+=("$script")
+  done < <(
+    # hot_specialization_reload only re-runs focused bundle/runtime/typed_thunk unit
+    # tests that already ran above via the aggregated suite, so keep it out of the
+    # full umbrella. The merged hot_specialization_suite replaces the legacy
+    # per-shape hot_specialization_* standalones so they share one hot-run startup.
+    {
+      find "$ROOT_DIR/vendor/zig/test/standalone" -mindepth 2 -maxdepth 2 -name 'hot-smoke-test.sh' \
+        ! -path "$ROOT_DIR/vendor/zig/test/standalone/hot_specialization_*/hot-smoke-test.sh"
+      printf '%s\n' "$ROOT_DIR/vendor/zig/test/standalone/hot_specialization_suite/hot-smoke-test.sh"
+    } | sort
+  )
+  run_smokes_parallel "$HOT_SMOKE_JOBS" "${smoke_scripts[@]}"
+fi
 printf 'time\t%s\t%ss\n' "hot-compiler-test-total" "$((SECONDS - SUITE_START))"
