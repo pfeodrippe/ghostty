@@ -36,8 +36,17 @@ HOT_TEST_CLEAN="${HOT_TEST_CLEAN:-0}"
 HOT_COMPILER_SUITE="${HOT_COMPILER_SUITE:-$ROOT_DIR/vendor/zig/lib/compiler/hot/test_suite.zig}"
 HOT_COMPILER_BUILD_CACHE_DIR="${HOT_COMPILER_BUILD_CACHE_DIR:-$ROOT_DIR/.zig-hot-compiler-build-cache}"
 HOT_COMPILER_GLOBAL_CACHE_DIR="${HOT_COMPILER_GLOBAL_CACHE_DIR:-$ROOT_DIR/.zig-hot-compiler-global-cache}"
+HOT_STANDALONE_BUILD_CACHE_DIR="${HOT_STANDALONE_BUILD_CACHE_DIR:-$ROOT_DIR/.zig-hot-standalone-build-cache}"
+HOT_STANDALONE_GLOBAL_CACHE_DIR="${HOT_STANDALONE_GLOBAL_CACHE_DIR:-$ROOT_DIR/.zig-hot-standalone-global-cache}"
+HOT_STANDALONE_MIN_FREE_GIB="${HOT_STANDALONE_MIN_FREE_GIB:-20}"
+HOT_STANDALONE_TARGET_FREE_GIB="${HOT_STANDALONE_TARGET_FREE_GIB:-30}"
 HOT_COMPILER_TEST_FILTER="${HOT_COMPILER_TEST_FILTER:-}"
 HOT_COMPILER_SKIP_SMOKES="${HOT_COMPILER_SKIP_SMOKES:-}"
+HOT_CROSS_TARGET_PREPARE_FIXTURE="${HOT_CROSS_TARGET_PREPARE_FIXTURE:-}"
+HOT_CROSS_TARGET_PREPARE_FIXTURES="${HOT_CROSS_TARGET_PREPARE_FIXTURES:-}"
+HOT_CROSS_TARGET_PREPARE_STEP="${HOT_CROSS_TARGET_PREPARE_STEP:-hot-prepare}"
+HOT_CROSS_TARGET_PREPARE_TARGET="${HOT_CROSS_TARGET_PREPARE_TARGET:-x86_64-linux-gnu}"
+HOT_COMPILER_SKIP_CROSS_TARGET_PREPARE="${HOT_COMPILER_SKIP_CROSS_TARGET_PREPARE:-}"
 if [[ -z "$HOT_COMPILER_SKIP_SMOKES" ]]; then
   if [[ -n "$HOT_COMPILER_TEST_FILTER" ]]; then
     HOT_COMPILER_SKIP_SMOKES=1
@@ -45,10 +54,14 @@ if [[ -z "$HOT_COMPILER_SKIP_SMOKES" ]]; then
     HOT_COMPILER_SKIP_SMOKES=0
   fi
 fi
+if [[ -z "$HOT_COMPILER_SKIP_CROSS_TARGET_PREPARE" ]]; then
+  HOT_COMPILER_SKIP_CROSS_TARGET_PREPARE="$HOT_COMPILER_SKIP_SMOKES"
+fi
 # These standalone hot smokes can be run in parallel, but cold hot-run builds
 # can be memory-hungry. Keep the default serial unless the caller opts in.
 HOT_SMOKE_JOBS="${HOT_SMOKE_JOBS:-1}"
 PARALLEL_LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hot-compiler-test.XXXXXX")"
+HOT_STANDALONE_ZIG_WRAPPER="$PARALLEL_LOG_DIR/zig-standalone-wrapper"
 
 cleanup_parallel_logs() {
   [[ -d "$PARALLEL_LOG_DIR" ]] || return 0
@@ -70,9 +83,142 @@ prune_runtime_path() {
   rm -rf "$path"
 }
 
+disk_available_kib() {
+  df -Pk "$ROOT_DIR" | awk 'NR == 2 { print $4 }'
+}
+
+legacy_standalone_cache_paths() {
+  find "$ROOT_DIR/vendor/zig/test/standalone" -mindepth 2 -maxdepth 2 -type d -name .zig-cache | sort
+}
+
+legacy_standalone_output_paths() {
+  find "$ROOT_DIR/vendor/zig/test/standalone" -mindepth 2 -maxdepth 2 -type d -name zig-out | sort
+}
+
+prune_for_disk_headroom() {
+  local min_free_kib=$((HOT_STANDALONE_MIN_FREE_GIB * 1024 * 1024))
+  local target_free_gib="$HOT_STANDALONE_TARGET_FREE_GIB"
+  if (( target_free_gib < HOT_STANDALONE_MIN_FREE_GIB )); then
+    target_free_gib="$HOT_STANDALONE_MIN_FREE_GIB"
+  fi
+  local target_free_kib=$((target_free_gib * 1024 * 1024))
+  local available_kib
+  available_kib="$(disk_available_kib)"
+  if (( available_kib >= min_free_kib )); then
+    return 0
+  fi
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    clean_dir "$path"
+    available_kib="$(disk_available_kib)"
+    if (( available_kib >= target_free_kib )); then
+      return 0
+    fi
+  done < <(legacy_standalone_cache_paths)
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    clean_dir "$path"
+    available_kib="$(disk_available_kib)"
+    if (( available_kib >= target_free_kib )); then
+      return 0
+    fi
+  done < <(legacy_standalone_output_paths)
+
+  clean_dir "$HOT_STANDALONE_BUILD_CACHE_DIR"
+  clean_dir "$HOT_STANDALONE_GLOBAL_CACHE_DIR"
+  available_kib="$(disk_available_kib)"
+
+  if (( available_kib < min_free_kib )); then
+    local available_gib=$((available_kib / 1024 / 1024))
+    echo "error: only ${available_gib}GiB free after pruning standalone hot caches; free more disk or lower HOT_STANDALONE_MIN_FREE_GIB" >&2
+    exit 1
+  fi
+}
+
+create_standalone_zig_wrapper() {
+  cat >"$HOT_STANDALONE_ZIG_WRAPPER" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+REAL_ZIG_BIN="${HOT_REAL_ZIG_BIN:?}"
+
+if [[ "${1:-}" == "build" ]]; then
+  shift
+
+  has_cache_dir=0
+  has_global_cache_dir=0
+  skip_next=0
+  for arg in "$@"; do
+    if (( skip_next != 0 )); then
+      skip_next=0
+      continue
+    fi
+
+    case "$arg" in
+      --cache-dir)
+        has_cache_dir=1
+        skip_next=1
+        ;;
+      --global-cache-dir)
+        has_global_cache_dir=1
+        skip_next=1
+        ;;
+      --cache-dir=*)
+        has_cache_dir=1
+        ;;
+      --global-cache-dir=*)
+        has_global_cache_dir=1
+        ;;
+    esac
+  done
+
+  extra_args=()
+  if (( has_cache_dir == 0 )) && [[ -n "${HOT_STANDALONE_BUILD_CACHE_DIR:-}" ]]; then
+    extra_args+=(--cache-dir "$HOT_STANDALONE_BUILD_CACHE_DIR")
+  fi
+  if (( has_global_cache_dir == 0 )) && [[ -n "${HOT_STANDALONE_GLOBAL_CACHE_DIR:-}" ]]; then
+    extra_args+=(--global-cache-dir "$HOT_STANDALONE_GLOBAL_CACHE_DIR")
+  fi
+
+  exec "$REAL_ZIG_BIN" build "${extra_args[@]}" "$@"
+fi
+
+exec "$REAL_ZIG_BIN" "$@"
+EOF
+  chmod +x "$HOT_STANDALONE_ZIG_WRAPPER"
+}
+
+default_cross_target_prepare_fixtures() {
+  # Keep the default matrix representative instead of exhaustive so the umbrella
+  # catches broader non-macOS build/config regressions without exploding runtime.
+  cat <<EOF
+$ROOT_DIR/vendor/zig/test/standalone/hot_graph_reload
+$ROOT_DIR/vendor/zig/test/standalone/hot_bare_fn_bridge
+$ROOT_DIR/vendor/zig/test/standalone/hot_native_boundary
+$ROOT_DIR/vendor/zig/test/standalone/hot_opaque_return
+$ROOT_DIR/vendor/zig/test/standalone/hot_specialization_suite
+EOF
+}
+
+resolve_cross_target_prepare_fixtures() {
+  if [[ -n "$HOT_CROSS_TARGET_PREPARE_FIXTURES" ]]; then
+    printf '%s\n' "$HOT_CROSS_TARGET_PREPARE_FIXTURES" | sed '/^$/d'
+    return 0
+  fi
+  if [[ -n "$HOT_CROSS_TARGET_PREPARE_FIXTURE" ]]; then
+    printf '%s\n' "$HOT_CROSS_TARGET_PREPARE_FIXTURE"
+    return 0
+  fi
+  default_cross_target_prepare_fixtures
+}
+
 if [[ "$HOT_TEST_CLEAN" == "1" ]]; then
   clean_dir "$HOT_COMPILER_BUILD_CACHE_DIR"
   clean_dir "$HOT_COMPILER_GLOBAL_CACHE_DIR"
+  clean_dir "$HOT_STANDALONE_BUILD_CACHE_DIR"
+  clean_dir "$HOT_STANDALONE_GLOBAL_CACHE_DIR"
   clean_dir "$ROOT_DIR/.zig-cache"
   while IFS= read -r path; do
     [[ -n "$path" ]] || continue
@@ -96,7 +242,12 @@ else
   )
 fi
 
-mkdir -p "$HOT_COMPILER_BUILD_CACHE_DIR" "$HOT_COMPILER_GLOBAL_CACHE_DIR"
+mkdir -p \
+  "$HOT_COMPILER_BUILD_CACHE_DIR" \
+  "$HOT_COMPILER_GLOBAL_CACHE_DIR" \
+  "$HOT_STANDALONE_BUILD_CACHE_DIR" \
+  "$HOT_STANDALONE_GLOBAL_CACHE_DIR"
+create_standalone_zig_wrapper
 
 run_test() {
   local file="$1"
@@ -118,8 +269,33 @@ run_smoke() {
   local script="$1"
   local start=$SECONDS
   echo "==> $script"
-  ZIG_BIN="$ZIG_BIN" ZIG_LIB_DIR="$ZIG_LIB_DIR" "$script"
+  mkdir -p "$HOT_STANDALONE_BUILD_CACHE_DIR" "$HOT_STANDALONE_GLOBAL_CACHE_DIR"
+  HOT_REAL_ZIG_BIN="$ZIG_BIN" \
+    HOT_STANDALONE_BUILD_CACHE_DIR="$HOT_STANDALONE_BUILD_CACHE_DIR" \
+    HOT_STANDALONE_GLOBAL_CACHE_DIR="$HOT_STANDALONE_GLOBAL_CACHE_DIR" \
+    ZIG_BIN="$HOT_STANDALONE_ZIG_WRAPPER" \
+    ZIG_LIB_DIR="$ZIG_LIB_DIR" \
+    "$script"
   printf 'time\t%s\t%ss\n' "$script" "$((SECONDS - start))"
+}
+
+run_cross_target_prepare() {
+  local fixture_dir="$1"
+  local target="$2"
+  local step="$3"
+  local start=$SECONDS
+  echo "==> $fixture_dir ($step $target)"
+  prune_for_disk_headroom
+  (
+    cd "$fixture_dir"
+    ZIG_LIB_DIR="$ZIG_LIB_DIR" \
+      "$ZIG_BIN" build \
+      --cache-dir "$HOT_STANDALONE_BUILD_CACHE_DIR" \
+      --global-cache-dir "$HOT_STANDALONE_GLOBAL_CACHE_DIR" \
+      -Dtarget="$target" \
+      "$step"
+  )
+  printf 'time\t%s\t%ss\n' "$fixture_dir:$step:$target" "$((SECONDS - start))"
 }
 
 run_smokes_parallel() {
@@ -207,9 +383,22 @@ run_smokes_parallel() {
 
 run_test "$HOT_COMPILER_SUITE"
 
+if [[ "$HOT_COMPILER_SKIP_CROSS_TARGET_PREPARE" == "1" ]]; then
+  printf 'skip\t%s\n' "cross-target hot prepare"
+else
+  while IFS= read -r fixture_dir; do
+    [[ -n "$fixture_dir" ]] || continue
+    run_cross_target_prepare \
+      "$fixture_dir" \
+      "$HOT_CROSS_TARGET_PREPARE_TARGET" \
+      "$HOT_CROSS_TARGET_PREPARE_STEP"
+  done < <(resolve_cross_target_prepare_fixtures)
+fi
+
 if [[ "$HOT_COMPILER_SKIP_SMOKES" == "1" ]]; then
   printf 'skip\t%s\n' "standalone hot smoke tests"
 else
+  prune_for_disk_headroom
   smoke_scripts=()
   while IFS= read -r script; do
     [[ -n "$script" ]] || continue
