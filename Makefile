@@ -16,6 +16,8 @@ HOT_GLOBAL_CACHE_DIR ?= $(REPO_ROOT)/.zig-hot-global-cache
 HOT_ZIG_CACHE_ARGS := --cache-dir "$(HOT_BUILD_CACHE_DIR)" --global-cache-dir "$(HOT_GLOBAL_CACHE_DIR)"
 HOT_CONFIG_FILE := $(HOT_BUILD_CACHE_DIR)/hot/ghostty.config
 HOT_TEST_CLEAN ?= 0
+HOT_TEST_PROMOTION_WORKERS ?= 2
+HOT_TEST_PROMOTION_DELAY_MS ?= 300
 TIGERBEETLE_DIR ?= $(abspath vendor/tigerbeetle)
 CODE_BIN ?= code
 GHOSTTY_RUN_ARGS := -- --config-default-files=false --window-vsync=false
@@ -261,11 +263,12 @@ hot-test: hot-stop $(ZIG_INSTALL_STAMP)
 		nohup env \
 			DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$${DYLD_LIBRARY_PATH:-}" \
 			ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
-			"$(ZIG)" build $(HOT_ZIG_CACHE_ARGS) run -Dhot=true $(GHOSTTY_RUN_ARGS) >"$(HOT_LOG)" 2>&1 & \
+			"$(ZIG)" build $(HOT_ZIG_CACHE_ARGS) run -Dhot=true -Dhot-promotion-workers="$(HOT_TEST_PROMOTION_WORKERS)" -Dhot-promotion-delay-ms="$(HOT_TEST_PROMOTION_DELAY_MS)" $(GHOSTTY_RUN_ARGS) >"$(HOT_LOG)" 2>&1 & \
 		run_pid=$$!; \
 		echo "$$run_pid" >"$(HOT_PID)"; \
 		HOT_CACHE_DIR="$(HOT_BUILD_CACHE_DIR)" \
 		HOT_CONFIG_FILE="$(HOT_CONFIG_FILE)" \
+		HOT_TEST_PROMOTION_WORKERS="$(HOT_TEST_PROMOTION_WORKERS)" \
 		./hot-smoke-test.sh'
 .PHONY: hot-test
 

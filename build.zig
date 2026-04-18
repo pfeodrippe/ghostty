@@ -48,6 +48,16 @@ pub fn build(b: *std.Build) !void {
         "hot",
         "Run with the vendor Zig hot runtime",
     ) orelse false;
+    const hot_promotion_workers = b.option(
+        usize,
+        "hot-promotion-workers",
+        "Promotion worker count for hot runs (0 uses the runtime default)",
+    ) orelse 0;
+    const hot_promotion_delay_ms = b.option(
+        usize,
+        "hot-promotion-delay-ms",
+        "Artificial promotion delay for hot runs in milliseconds (0 disables it)",
+    ) orelse 0;
 
     // Ghostty dependencies used by many artifacts.
     const deps = try buildpkg.SharedDeps.init(b, &config);
@@ -248,10 +258,17 @@ pub fn build(b: *std.Build) !void {
                     break :run;
                 }
 
+                if (hot_promotion_delay_ms != 0) {
+                    run_cmd.setEnvironmentVariable(
+                        "ZIG_HOT_PROMOTION_DELAY_MS",
+                        b.fmt("{d}", .{hot_promotion_delay_ms}),
+                    );
+                }
                 const hot = try std.Build.Hot.init(b, .{
                     .name = "ghostty",
                     .root_module = exe.exe.root_module,
                     .main_executable = exe.exe.getEmittedBin(),
+                    .promotion_workers = if (hot_promotion_workers == 0) null else hot_promotion_workers,
                 });
                 hot.configureRun(run_cmd);
             }
@@ -296,10 +313,17 @@ pub fn build(b: *std.Build) !void {
                     "macos/build/{s}/Ghostty.app/Contents/MacOS/ghostty",
                     .{hot_xc_config},
                 );
+                if (hot_promotion_delay_ms != 0) {
+                    macos_app_native_only.open.setEnvironmentVariable(
+                        "ZIG_HOT_PROMOTION_DELAY_MS",
+                        b.fmt("{d}", .{hot_promotion_delay_ms}),
+                    );
+                }
                 const hot = try std.Build.Hot.init(b, .{
                     .name = "ghostty",
                     .root_module = exe.exe.root_module,
                     .main_executable = .{ .cwd_relative = hot_executable },
+                    .promotion_workers = if (hot_promotion_workers == 0) null else hot_promotion_workers,
                 });
                 hot.configureRun(macos_app_native_only.open);
             }

@@ -608,19 +608,21 @@ PY
 }
 
 patch_run_zig_index_for_cell_probe() {
+  local blocked_cp="${1:-Q}"
   ensure_run_zig_backup
   restore_run_zig_source
-  python3 - "$RUN_ZIG_FILE" <<'PY'
+  python3 - "$RUN_ZIG_FILE" "$blocked_cp" <<'PY'
 from pathlib import Path
 import sys
 
 path = Path(sys.argv[1])
+blocked_cp = sys.argv[2]
 source = path.read_text()
 old = """        const primary_cp: u32 = cell.codepoint();
         const primary = try self.opts.grid.getIndex(
 """
-new = """        const primary_cp: u32 = cell.codepoint();
-        if (primary_cp == 'Q') return null;
+new = f"""        const primary_cp: u32 = cell.codepoint();
+        if (primary_cp == '{blocked_cp}') return null;
         const primary = try self.opts.grid.getIndex(
 """
 if old not in source:
@@ -766,6 +768,35 @@ expect_eval_done() {
     exit 1
   fi
 }
+
+ghostty_proven_functions=(
+  RGB.componentLuminance
+  RunIterator.addCodepoint
+  Shaper.makeFeaturesDict
+  Shaper.endFrame
+  Shaper.getFont
+  ghostty_surface_process_exited
+  ghostty_surface_size
+  ghostty_init
+  getSubclass
+  RGB.perceivedLuminance
+  RGB.eql
+  RGB.contrast
+  Padding.add
+  Padding.eql
+  Padding.balanced
+  GridSize.init
+  ScreenSize.subPadding
+  ScreenSize.blankPadding
+  Mods.binding
+  Key.modifier
+  isSafeUtf8
+)
+ghostty_proven_vars=(
+  Subclass
+  state
+  decompressed_data
+)
 
 expect_log_after() {
   local start_line="$1"
@@ -1316,6 +1347,252 @@ else
   echo "eval-zig Key.modifier not yet supported — skipping"
 fi
 
+# GridSize.init — size-to-grid conversion through float division + clamp
+grid_init_eval="$(zig_hot eval-zig src/renderer/size.zig 'GridSize.init(ScreenSize{.width=20,.height=40}, CellSize{.width=6,.height=15}).columns' 2>&1 || true)"
+if echo "$grid_init_eval" | grep -qF "value: 3"; then
+  echo "eval-zig GridSize.init(...).columns = 3 ✓"
+
+  grid_init_rows="$(zig_hot eval-zig src/renderer/size.zig 'GridSize.init(ScreenSize{.width=20,.height=40}, CellSize{.width=6,.height=15}).rows' 2>&1 || true)"
+  if echo "$grid_init_rows" | grep -qF "value: 2"; then
+    echo "eval-zig GridSize.init(...).rows = 2 ✓"
+  fi
+
+  assoc_grid_init="$(zig_hot assoc --no-native GridSize.init --file src/renderer/size.zig 'fn init(screen: ScreenSize, cell: CellSize) GridSize { _ = screen; _ = cell; return .{ .columns = 9, .rows = 8 }; }' 2>&1)"
+  if echo "$assoc_grid_init" | grep -qF "done"; then
+    grid_init_patched="$(zig_hot eval-zig src/renderer/size.zig 'GridSize.init(ScreenSize{.width=20,.height=40}, CellSize{.width=6,.height=15}).columns' 2>&1 || true)"
+    expect_contains "$grid_init_patched" "value: 9"
+    echo "assoc GridSize.init override: OK"
+
+    dissoc_grid_init="$(zig_hot dissoc GridSize.init 2>&1)"
+    expect_contains "$dissoc_grid_init" "done"
+    grid_init_restored="$(zig_hot eval-zig src/renderer/size.zig 'GridSize.init(ScreenSize{.width=20,.height=40}, CellSize{.width=6,.height=15}).columns' 2>&1 || true)"
+    expect_contains "$grid_init_restored" "value: 3"
+    echo "dissoc GridSize.init: OK"
+  else
+    echo "assoc GridSize.init not yet supported — skipping"
+  fi
+else
+  echo "eval-zig GridSize.init not yet supported — skipping"
+fi
+
+# ScreenSize.subPadding — saturating subtraction across struct fields
+screen_sub_eval="$(zig_hot eval-zig src/renderer/size.zig 'ScreenSize.subPadding(ScreenSize{.width=100,.height=80}, Padding{.top=10,.bottom=20,.right=7,.left=3}).width' 2>&1 || true)"
+if echo "$screen_sub_eval" | grep -qF "value: 90"; then
+  echo "eval-zig ScreenSize.subPadding(...).width = 90 ✓"
+
+  screen_sub_height="$(zig_hot eval-zig src/renderer/size.zig 'ScreenSize.subPadding(ScreenSize{.width=100,.height=80}, Padding{.top=10,.bottom=20,.right=7,.left=3}).height' 2>&1 || true)"
+  if echo "$screen_sub_height" | grep -qF "value: 50"; then
+    echo "eval-zig ScreenSize.subPadding(...).height = 50 ✓"
+  fi
+
+  assoc_screen_sub="$(zig_hot assoc --no-native ScreenSize.subPadding --file src/renderer/size.zig 'fn subPadding(self: ScreenSize, padding: Padding) ScreenSize { _ = self; _ = padding; return .{ .width = 1, .height = 2 }; }' 2>&1)"
+  if echo "$assoc_screen_sub" | grep -qF "done"; then
+    screen_sub_patched="$(zig_hot eval-zig src/renderer/size.zig 'ScreenSize.subPadding(ScreenSize{.width=100,.height=80}, Padding{.top=10,.bottom=20,.right=7,.left=3}).width' 2>&1 || true)"
+    expect_contains "$screen_sub_patched" "value: 1"
+    echo "assoc ScreenSize.subPadding override: OK"
+
+    dissoc_screen_sub="$(zig_hot dissoc ScreenSize.subPadding 2>&1)"
+    expect_contains "$dissoc_screen_sub" "done"
+    screen_sub_restored="$(zig_hot eval-zig src/renderer/size.zig 'ScreenSize.subPadding(ScreenSize{.width=100,.height=80}, Padding{.top=10,.bottom=20,.right=7,.left=3}).width' 2>&1 || true)"
+    expect_contains "$screen_sub_restored" "value: 90"
+    echo "dissoc ScreenSize.subPadding: OK"
+  else
+    echo "assoc ScreenSize.subPadding not yet supported — skipping"
+  fi
+else
+  echo "eval-zig ScreenSize.subPadding not yet supported — skipping"
+fi
+
+# Padding.balanced — float math + floor + int conversion
+pad_balanced_eval="$(zig_hot eval-zig src/renderer/size.zig 'Padding.balanced(ScreenSize{.width=1090,.height=1070}, GridSize{.columns=54,.rows=26}, CellSize{.width=20,.height=40}).top' 2>&1 || true)"
+if echo "$pad_balanced_eval" | grep -qF "value: 15"; then
+  echo "eval-zig Padding.balanced(...).top = 15 ✓"
+
+  pad_balanced_right="$(zig_hot eval-zig src/renderer/size.zig 'Padding.balanced(ScreenSize{.width=1090,.height=1070}, GridSize{.columns=54,.rows=26}, CellSize{.width=20,.height=40}).right' 2>&1 || true)"
+  if echo "$pad_balanced_right" | grep -qF "value: 5"; then
+    echo "eval-zig Padding.balanced(...).right = 5 ✓"
+  fi
+
+  assoc_pad_balanced="$(zig_hot assoc --no-native Padding.balanced --file src/renderer/size.zig 'fn balanced(screen: ScreenSize, grid: GridSize, cell: CellSize) Padding { _ = screen; _ = grid; _ = cell; return .{ .top = 1, .bottom = 2, .right = 3, .left = 4 }; }' 2>&1)"
+  if echo "$assoc_pad_balanced" | grep -qF "done"; then
+    pad_balanced_patched="$(zig_hot eval-zig src/renderer/size.zig 'Padding.balanced(ScreenSize{.width=1090,.height=1070}, GridSize{.columns=54,.rows=26}, CellSize{.width=20,.height=40}).top' 2>&1 || true)"
+    expect_contains "$pad_balanced_patched" "value: 1"
+    echo "assoc Padding.balanced override: OK"
+
+    dissoc_pad_balanced="$(zig_hot dissoc Padding.balanced 2>&1)"
+    expect_contains "$dissoc_pad_balanced" "done"
+    pad_balanced_restored="$(zig_hot eval-zig src/renderer/size.zig 'Padding.balanced(ScreenSize{.width=1090,.height=1070}, GridSize{.columns=54,.rows=26}, CellSize{.width=20,.height=40}).top' 2>&1 || true)"
+    expect_contains "$pad_balanced_restored" "value: 15"
+    echo "dissoc Padding.balanced: OK"
+  else
+    echo "assoc Padding.balanced not yet supported — skipping"
+  fi
+else
+  echo "eval-zig Padding.balanced not yet supported — skipping"
+fi
+
+# ScreenSize.blankPadding — multi-struct arithmetic after padding subtraction
+blank_padding_eval="$(zig_hot eval-zig src/renderer/size.zig 'ScreenSize.blankPadding(ScreenSize{.width=100,.height=80}, Padding{.top=4,.bottom=4,.right=2,.left=2}, GridSize{.columns=5,.rows=3}, CellSize{.width=10,.height=10}).right' 2>&1 || true)"
+if echo "$blank_padding_eval" | grep -qF "value: 46"; then
+  echo "eval-zig ScreenSize.blankPadding(...).right = 46 ✓"
+
+  blank_padding_bottom="$(zig_hot eval-zig src/renderer/size.zig 'ScreenSize.blankPadding(ScreenSize{.width=100,.height=80}, Padding{.top=4,.bottom=4,.right=2,.left=2}, GridSize{.columns=5,.rows=3}, CellSize{.width=10,.height=10}).bottom' 2>&1 || true)"
+  if echo "$blank_padding_bottom" | grep -qF "value: 42"; then
+    echo "eval-zig ScreenSize.blankPadding(...).bottom = 42 ✓"
+  fi
+
+  assoc_blank_padding="$(zig_hot assoc --no-native ScreenSize.blankPadding --file src/renderer/size.zig 'fn blankPadding(self: ScreenSize, padding: Padding, grid: GridSize, cell: CellSize) Padding { _ = self; _ = padding; _ = grid; _ = cell; return .{ .top = 6, .bottom = 5, .right = 7, .left = 4 }; }' 2>&1)"
+  if echo "$assoc_blank_padding" | grep -qF "done"; then
+    blank_padding_patched="$(zig_hot eval-zig src/renderer/size.zig 'ScreenSize.blankPadding(ScreenSize{.width=100,.height=80}, Padding{.top=4,.bottom=4,.right=2,.left=2}, GridSize{.columns=5,.rows=3}, CellSize{.width=10,.height=10}).right' 2>&1 || true)"
+    expect_contains "$blank_padding_patched" "value: 7"
+    echo "assoc ScreenSize.blankPadding override: OK"
+
+    dissoc_blank_padding="$(zig_hot dissoc ScreenSize.blankPadding 2>&1)"
+    expect_contains "$dissoc_blank_padding" "done"
+    blank_padding_restored="$(zig_hot eval-zig src/renderer/size.zig 'ScreenSize.blankPadding(ScreenSize{.width=100,.height=80}, Padding{.top=4,.bottom=4,.right=2,.left=2}, GridSize{.columns=5,.rows=3}, CellSize{.width=10,.height=10}).right' 2>&1 || true)"
+    expect_contains "$blank_padding_restored" "value: 46"
+    echo "dissoc ScreenSize.blankPadding: OK"
+  else
+    echo "assoc ScreenSize.blankPadding not yet supported — skipping"
+  fi
+else
+  echo "eval-zig ScreenSize.blankPadding not yet supported — skipping"
+fi
+
+# Mods.unset — packed-struct bitwise AND-NOT
+mods_unset_eval="$(zig_hot eval-zig src/input/key_mods.zig 'Mods.unset(Mods{.shift=true,.ctrl=false,.alt=true,.super=false,.caps_lock=true,.num_lock=false}, Mods{.shift=false,.ctrl=false,.alt=true,.super=false,.caps_lock=true,.num_lock=false}).shift and !Mods.unset(Mods{.shift=true,.ctrl=false,.alt=true,.super=false,.caps_lock=true,.num_lock=false}, Mods{.shift=false,.ctrl=false,.alt=true,.super=false,.caps_lock=true,.num_lock=false}).alt and !Mods.unset(Mods{.shift=true,.ctrl=false,.alt=true,.super=false,.caps_lock=true,.num_lock=false}, Mods{.shift=false,.ctrl=false,.alt=true,.super=false,.caps_lock=true,.num_lock=false}).caps_lock' 2>&1 || true)"
+if echo "$mods_unset_eval" | grep -qF "value: true"; then
+  echo "eval-zig Mods.unset(...fields...) = true ✓"
+
+  assoc_mods_unset="$(zig_hot assoc --no-native Mods.unset --file src/input/key_mods.zig 'fn unset(self: Mods, other: Mods) Mods { _ = self; _ = other; return .{ .super = true }; }' 2>&1)"
+  if echo "$assoc_mods_unset" | grep -qF "done"; then
+    mods_unset_patched="$(zig_hot eval-zig src/input/key_mods.zig 'Mods.unset(Mods{.shift=true,.ctrl=false,.alt=true,.super=false,.caps_lock=true,.num_lock=false}, Mods{.shift=false,.ctrl=false,.alt=true,.super=false,.caps_lock=true,.num_lock=false}).super' 2>&1 || true)"
+    expect_contains "$mods_unset_patched" "value: true"
+    echo "assoc Mods.unset override: OK"
+
+    dissoc_mods_unset="$(zig_hot dissoc Mods.unset 2>&1)"
+    expect_contains "$dissoc_mods_unset" "done"
+    mods_unset_restored="$(zig_hot eval-zig src/input/key_mods.zig 'Mods.unset(Mods{.shift=true,.ctrl=false,.alt=true,.super=false,.caps_lock=true,.num_lock=false}, Mods{.shift=false,.ctrl=false,.alt=true,.super=false,.caps_lock=true,.num_lock=false}).shift' 2>&1 || true)"
+    expect_contains "$mods_unset_restored" "value: true"
+    ghostty_proven_functions+=(Mods.unset)
+    echo "dissoc Mods.unset: OK"
+  else
+    echo "assoc Mods.unset not yet supported — skipping"
+  fi
+else
+  echo "eval-zig Mods.unset not yet supported — skipping"
+fi
+
+# Mods.withoutLocks — packed-struct mutation with lock-bit clearing
+mods_without_locks_eval="$(zig_hot eval-zig src/input/key_mods.zig 'Mods.withoutLocks(Mods{.shift=true,.ctrl=false,.alt=false,.super=false,.caps_lock=true,.num_lock=true}).shift and !Mods.withoutLocks(Mods{.shift=true,.ctrl=false,.alt=false,.super=false,.caps_lock=true,.num_lock=true}).caps_lock and !Mods.withoutLocks(Mods{.shift=true,.ctrl=false,.alt=false,.super=false,.caps_lock=true,.num_lock=true}).num_lock' 2>&1 || true)"
+if echo "$mods_without_locks_eval" | grep -qF "value: true"; then
+  echo "eval-zig Mods.withoutLocks(...fields...) = true ✓"
+
+  assoc_mods_without_locks="$(zig_hot assoc --no-native Mods.withoutLocks --file src/input/key_mods.zig 'fn withoutLocks(self: Mods) Mods { _ = self; return .{ .alt = true }; }' 2>&1)"
+  if echo "$assoc_mods_without_locks" | grep -qF "done"; then
+    mods_without_locks_patched="$(zig_hot eval-zig src/input/key_mods.zig 'Mods.withoutLocks(Mods{.shift=true,.ctrl=false,.alt=false,.super=false,.caps_lock=true,.num_lock=true}).alt' 2>&1 || true)"
+    expect_contains "$mods_without_locks_patched" "value: true"
+    echo "assoc Mods.withoutLocks override: OK"
+
+    dissoc_mods_without_locks="$(zig_hot dissoc Mods.withoutLocks 2>&1)"
+    expect_contains "$dissoc_mods_without_locks" "done"
+    mods_without_locks_restored="$(zig_hot eval-zig src/input/key_mods.zig 'Mods.withoutLocks(Mods{.shift=true,.ctrl=false,.alt=false,.super=false,.caps_lock=true,.num_lock=true}).shift' 2>&1 || true)"
+    expect_contains "$mods_without_locks_restored" "value: true"
+    ghostty_proven_functions+=(Mods.withoutLocks)
+    echo "dissoc Mods.withoutLocks: OK"
+  else
+    echo "assoc Mods.withoutLocks not yet supported — skipping"
+  fi
+else
+  echo "eval-zig Mods.withoutLocks not yet supported — skipping"
+fi
+
+# modeFromInt — inline-for tag match + packed bitcast + enumFromInt
+mode_from_int_eval="$(zig_hot eval-zig src/terminal/modes.zig 'modeFromInt(4, true) != null' 2>&1 || true)"
+if echo "$mode_from_int_eval" | grep -qF "value: true"; then
+  echo "eval-zig modeFromInt(4, true) != null ✓"
+
+  mode_from_int_null="$(zig_hot eval-zig src/terminal/modes.zig 'modeFromInt(9, true) == null' 2>&1 || true)"
+  if echo "$mode_from_int_null" | grep -qF "value: true"; then
+    echo "eval-zig modeFromInt(9, true) == null ✓"
+  fi
+
+  assoc_mode_from_int="$(zig_hot assoc --no-native modeFromInt --file src/terminal/modes.zig 'fn modeFromInt(v: u16, ansi: bool) ?Mode { _ = v; _ = ansi; return .wraparound; }' 2>&1)"
+  if echo "$assoc_mode_from_int" | grep -qF "done"; then
+    mode_from_int_patched="$(zig_hot eval-zig src/terminal/modes.zig 'modeFromInt(9, true) != null' 2>&1 || true)"
+    expect_contains "$mode_from_int_patched" "value: true"
+    echo "assoc modeFromInt override: OK"
+
+    dissoc_mode_from_int="$(zig_hot dissoc modeFromInt 2>&1)"
+    expect_contains "$dissoc_mode_from_int" "done"
+    mode_from_int_restored="$(zig_hot eval-zig src/terminal/modes.zig 'modeFromInt(9, true) == null' 2>&1 || true)"
+    expect_contains "$mode_from_int_restored" "value: true"
+    ghostty_proven_functions+=(modeFromInt)
+    echo "dissoc modeFromInt: OK"
+  else
+    echo "assoc modeFromInt not yet supported — skipping"
+  fi
+else
+  echo "eval-zig modeFromInt not yet supported — skipping"
+fi
+
+# reqFromInt — request-tag match + packed bitcast + enumFromInt
+req_from_int_eval="$(zig_hot eval-zig src/terminal/device_status.zig 'reqFromInt(6, false) != null' 2>&1 || true)"
+if echo "$req_from_int_eval" | grep -qF "value: true"; then
+  echo "eval-zig reqFromInt(6, false) != null ✓"
+
+  req_from_int_color="$(zig_hot eval-zig src/terminal/device_status.zig 'reqFromInt(996, true) != null' 2>&1 || true)"
+  if echo "$req_from_int_color" | grep -qF "value: true"; then
+    echo "eval-zig reqFromInt(996, true) != null ✓"
+  fi
+
+  assoc_req_from_int="$(zig_hot assoc --no-native reqFromInt --file src/terminal/device_status.zig 'fn reqFromInt(v: u16, question: bool) ?Request { _ = v; _ = question; return .operating_status; }' 2>&1)"
+  if echo "$assoc_req_from_int" | grep -qF "done"; then
+    req_from_int_patched="$(zig_hot eval-zig src/terminal/device_status.zig 'reqFromInt(999, true) != null' 2>&1 || true)"
+    expect_contains "$req_from_int_patched" "value: true"
+    echo "assoc reqFromInt override: OK"
+
+    dissoc_req_from_int="$(zig_hot dissoc reqFromInt 2>&1)"
+    expect_contains "$dissoc_req_from_int" "done"
+    req_from_int_restored="$(zig_hot eval-zig src/terminal/device_status.zig 'reqFromInt(999, true) == null' 2>&1 || true)"
+    expect_contains "$req_from_int_restored" "value: true"
+    ghostty_proven_functions+=(reqFromInt)
+    echo "dissoc reqFromInt: OK"
+  else
+    echo "assoc reqFromInt not yet supported — skipping"
+  fi
+else
+  echo "eval-zig reqFromInt not yet supported — skipping"
+fi
+
+# isSafeUtf8 — UTF-8 iteration plus control-code filtering
+safe_utf8_eval="$(zig_hot eval-zig src/terminal/osc/encoding.zig 'isSafeUtf8("Hello world!")' 2>&1 || true)"
+if echo "$safe_utf8_eval" | grep -qF "value: true"; then
+  echo "eval-zig isSafeUtf8(\"Hello world!\") = true ✓"
+
+  unsafe_utf8_eval="$(zig_hot eval-zig src/terminal/osc/encoding.zig 'isSafeUtf8("line1\nline2")' 2>&1 || true)"
+  if echo "$unsafe_utf8_eval" | grep -qF "value: false"; then
+    echo "eval-zig isSafeUtf8(\"line1\\nline2\") = false ✓"
+  fi
+
+  assoc_safe_utf8="$(zig_hot assoc --no-native isSafeUtf8 --file src/terminal/osc/encoding.zig 'fn isSafeUtf8(s: []const u8) bool { _ = s; return false; }' 2>&1)"
+  if echo "$assoc_safe_utf8" | grep -qF "done"; then
+    safe_utf8_patched="$(zig_hot eval-zig src/terminal/osc/encoding.zig 'isSafeUtf8("Hello world!")' 2>&1 || true)"
+    expect_contains "$safe_utf8_patched" "value: false"
+    echo "assoc isSafeUtf8 override: OK"
+
+    dissoc_safe_utf8="$(zig_hot dissoc isSafeUtf8 2>&1)"
+    expect_contains "$dissoc_safe_utf8" "done"
+    safe_utf8_restored="$(zig_hot eval-zig src/terminal/osc/encoding.zig 'isSafeUtf8("Hello world!")' 2>&1 || true)"
+    expect_contains "$safe_utf8_restored" "value: true"
+    echo "dissoc isSafeUtf8: OK"
+  else
+    echo "assoc isSafeUtf8 not yet supported — skipping"
+  fi
+else
+  echo "eval-zig isSafeUtf8 not yet supported — skipping"
+fi
+
 # ── Assoc override end-to-end tests ─────────────────────────────────
 
 # Override answer() to return 99 — then doubleAnswer() should return double(99) = 198
@@ -1392,6 +1669,21 @@ expect_ghostty_ocr_contains "!!!BBB"
 paste_ghostty_text "$runiter_next_probe_text"
 expect_ghostty_ocr_contains "RUNITER_NEXTZAAA!!!BBB"
 echo "reload RunIterator.indexForCell while addCodepoint specialization stays live: OK"
+
+runiter_index_stress_probe_text=$'clear\r# RUNITER_STRESS_QQRRSS...BBB\r'
+patch_run_zig_index_for_cell_probe R
+run_index_stress_reload_r="$(zig_hot reload "$RUN_ZIG_REL" "$run_index_start" "$run_index_end" 2>&1)"
+expect_hot_success "$run_index_stress_reload_r"
+expect_contains "$run_index_stress_reload_r" "decl=RunIterator.indexForCell;kind=function_decl"
+patch_run_zig_index_for_cell_probe S
+run_index_stress_reload_s="$(zig_hot reload "$RUN_ZIG_REL" "$run_index_start" "$run_index_end" 2>&1)"
+expect_hot_success "$run_index_stress_reload_s"
+expect_contains "$run_index_stress_reload_s" "decl=RunIterator.indexForCell;kind=function_decl"
+paste_ghostty_text "$runiter_index_stress_probe_text"
+expect_ghostty_ocr_contains "RUNITER_STRESS_QQRR!!!BBB"
+paste_ghostty_text "$runiter_next_probe_text"
+expect_ghostty_ocr_contains "RUNITER_NEXTZAAA!!!BBB"
+echo "reload RunIterator.indexForCell rapid repeated edits keep latest live version: OK"
 
 restore_run_zig_source
 run_index_restore="$(zig_hot reload "$RUN_ZIG_REL" "$run_index_start" "$run_index_end" 2>&1)"
@@ -1489,6 +1781,22 @@ dissoc_state_var="$(zig_hot dissoc state 2>&1)"
 expect_hot_success "$dissoc_state_var"
 echo "dissoc ghostty imported state probe and var override: OK"
 
+decompressed_data_assoc_short="$(zig_hot assoc --type var --no-native decompressed_data '"hot"' 2>&1 || true)"
+expect_hot_success "$decompressed_data_assoc_short"
+decompressed_data_probe_short="$(zig_hot eval-zig src/cli/boo.zig 'decompressed_data.len' 2>&1 || true)"
+expect_hot_success "$decompressed_data_probe_short"
+expect_contains "$decompressed_data_probe_short" "value: 3"
+echo "assoc decompressed_data runtime_addressable var -> len 3: OK"
+
+decompressed_data_assoc_long="$(zig_hot assoc --type var --no-native decompressed_data '"reload"' 2>&1 || true)"
+expect_hot_success "$decompressed_data_assoc_long"
+decompressed_data_probe_long="$(zig_hot eval-zig src/cli/boo.zig 'decompressed_data.len' 2>&1 || true)"
+expect_hot_success "$decompressed_data_probe_long"
+expect_contains "$decompressed_data_probe_long" "value: 6"
+dissoc_decompressed_data="$(zig_hot dissoc decompressed_data 2>&1 || true)"
+expect_hot_success "$dissoc_decompressed_data"
+echo "dissoc decompressed_data runtime_addressable var override: OK"
+
 # Override Shaper.getFont without native patching — the live path should execute
 # and Ghostty must stay responsive even if the override returns an error.
 gf_assoc="$(zig_hot assoc --no-native Shaper.getFont --file src/font/shaper/coretext.zig - <<GF_EOF
@@ -1545,4 +1853,5 @@ echo "assoc non-existent function: OK (no crash)"
 zig_hot dissoc answer >/dev/null 2>&1 || true
 zig_hot dissoc RGB.componentLuminance >/dev/null 2>&1 || true
 
+echo "summary ghostty hot surface: functions=${#ghostty_proven_functions[@]} vars=${#ghostty_proven_vars[@]}"
 echo "hot smoke test passed"
