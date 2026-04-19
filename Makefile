@@ -13,6 +13,9 @@ HOT_PID := $(REPO_ROOT)/.hot-run.pid
 HOT_PORT_FILE := $(REPO_ROOT)/.nrepl-port
 HOT_BUILD_CACHE_DIR ?= $(REPO_ROOT)/.zig-hot-build-cache
 HOT_GLOBAL_CACHE_DIR ?= $(REPO_ROOT)/.zig-hot-global-cache
+HOT_THUNK_CACHE_DIR ?= $(REPO_ROOT)/.zig-hot-thunks
+HOT_BUILD_CACHE_MAX_GIB ?= 24
+HOT_THUNK_CACHE_MAX_GIB ?= 6
 HOT_ZIG_CACHE_ARGS := --cache-dir "$(HOT_BUILD_CACHE_DIR)" --global-cache-dir "$(HOT_GLOBAL_CACHE_DIR)"
 HOT_CONFIG_FILE := $(HOT_BUILD_CACHE_DIR)/hot/ghostty.config
 HOT_TEST_CLEAN ?= 0
@@ -225,11 +228,13 @@ hot-stop:
 hot-run: hot-stop $(ZIG_INSTALL_STAMP)
 	@mkdir -p "$(dir $(HOT_LOG))"
 	@bash -lc 'set -euo pipefail; \
+		./tools/prune-hot-cache.sh "$(HOT_THUNK_CACHE_DIR)" "$(HOT_THUNK_CACHE_MAX_GIB)" "ghostty hot thunk cache"; \
 		mkdir -p "$(HOT_BUILD_CACHE_DIR)" "$(HOT_GLOBAL_CACHE_DIR)"; \
 		rm -f "$(HOT_LOG)" "$(HOT_PID)" "$(HOT_PORT_FILE)" "$(HOT_CONFIG_FILE)"; \
 		nohup env \
 			DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$${DYLD_LIBRARY_PATH:-}" \
 			ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
+			ZIG_HOT_CACHE_DIR="$(HOT_THUNK_CACHE_DIR)" \
 			"$(ZIG)" build $(HOT_ZIG_CACHE_ARGS) run -Dhot=true $(GHOSTTY_RUN_ARGS) >"$(HOT_LOG)" 2>&1 & \
 		run_pid=$$!; \
 		echo "$$run_pid" >"$(HOT_PID)"; \
@@ -255,14 +260,18 @@ hot-test: hot-stop $(ZIG_INSTALL_STAMP)
 		if [ "$(HOT_TEST_CLEAN)" = "1" ]; then \
 			clean_dir "$(HOT_BUILD_CACHE_DIR)"; \
 			clean_dir "$(HOT_GLOBAL_CACHE_DIR)"; \
+			clean_dir "$(HOT_THUNK_CACHE_DIR)"; \
+		else \
+			./tools/prune-hot-cache.sh "$(HOT_THUNK_CACHE_DIR)" "$(HOT_THUNK_CACHE_MAX_GIB)" "ghostty hot thunk cache"; \
 		fi; \
-		mkdir -p "$(HOT_BUILD_CACHE_DIR)" "$(HOT_GLOBAL_CACHE_DIR)"; \
+		mkdir -p "$(HOT_BUILD_CACHE_DIR)" "$(HOT_GLOBAL_CACHE_DIR)" "$(HOT_THUNK_CACHE_DIR)"; \
 		rm -f "$(HOT_LOG)" "$(HOT_PID)" "$(HOT_PORT_FILE)" "$(HOT_CONFIG_FILE)"; \
 		cleanup() { "$(MAKE)" hot-stop >/dev/null 2>&1 || true; }; \
 		trap cleanup EXIT INT TERM; \
 		nohup env \
 			DYLD_LIBRARY_PATH="$(ZIG_DYLD_LIBRARY_PATH):$${DYLD_LIBRARY_PATH:-}" \
 			ZIG_LIB_DIR="$(ZIG_LIB_DIR)" \
+			ZIG_HOT_CACHE_DIR="$(HOT_THUNK_CACHE_DIR)" \
 			"$(ZIG)" build $(HOT_ZIG_CACHE_ARGS) run -Dhot=true -Dhot-promotion-workers="$(HOT_TEST_PROMOTION_WORKERS)" -Dhot-promotion-delay-ms="$(HOT_TEST_PROMOTION_DELAY_MS)" $(GHOSTTY_RUN_ARGS) >"$(HOT_LOG)" 2>&1 & \
 		run_pid=$$!; \
 		echo "$$run_pid" >"$(HOT_PID)"; \

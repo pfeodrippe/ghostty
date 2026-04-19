@@ -4,12 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOT_BIN="${HOT_BIN:-$ROOT_DIR/tools/hot}"
 ZIG_BIN="${ZIG_BIN:-$ROOT_DIR/.zig-toolchain/zig-0.15.2/bin/zig}"
+ZIG_LIB_DIR="${ZIG_LIB_DIR:-$ROOT_DIR/vendor/zig/lib}"
 HOT_CACHE_DIR="${HOT_CACHE_DIR:-$ROOT_DIR/.zig-cache}"
 HOT_CONFIG_FILE="${HOT_CONFIG_FILE:-$HOT_CACHE_DIR/hot/ghostty.config}"
 PORT_FILE="${PORT_FILE:-$ROOT_DIR/.nrepl-port}"
 HOT_LOG="${HOT_LOG:-$ROOT_DIR/.hot-run.log}"
 GHOSTTY_BIN_PATTERN="${GHOSTTY_BIN_PATTERN:-macos/build/Debug/Ghostty.app/Contents/MacOS/ghostty}"
 GHOSTTY_APP_PATH="${GHOSTTY_APP_PATH:-$ROOT_DIR/macos/build/Debug/Ghostty.app}"
+HOT_TEST_PROMOTION_WORKERS="${HOT_TEST_PROMOTION_WORKERS:-2}"
 SURFACE_HANDLE='@objc:NSApp.activeWindow.contentView//surfaceModel.asObject.surface'
 SURFACE_HANDLE_CANDIDATES=(
   '@objc:NSApp.activeWindow.contentView//surfaceModel.asObject.surface'
@@ -526,7 +528,7 @@ hot() {
 zig_hot() {
   (
     cd "$ROOT_DIR"
-    "$ZIG_BIN" hot "$@"
+    env ZIG_LIB_DIR="$ZIG_LIB_DIR" "$ZIG_BIN" hot "$@"
   )
 }
 
@@ -653,6 +655,57 @@ expect_hot_success() {
     echo "$output" >&2
     exit 1
   fi
+}
+
+promotion_telemetry_line() {
+  local output line
+  output="$(zig_hot promotion-telemetry 2>&1)" || return 1
+  line="$(awk '/^promotion-telemetry:$/ { getline; print; exit }' <<<"$output")"
+  [[ -n "$line" ]] || return 1
+  printf '%s\n' "$line"
+}
+
+promotion_telemetry_value() {
+  local key="$1"
+  local line
+  line="$(promotion_telemetry_line)" || return 1
+  awk -v key="$key" '
+    {
+      for (i = 1; i <= NF; i += 1) {
+        split($i, pair, "=")
+        if (pair[1] == key) {
+          print pair[2]
+          exit 0
+        }
+      }
+      exit 1
+    }
+  ' <<<"$line"
+}
+
+wait_for_promotion_telemetry_at_least() {
+  local key="$1"
+  local minimum="$2"
+  local deadline=$((SECONDS + 120))
+  local poll_interval="${HOT_TEST_PROMOTION_POLL_INTERVAL:-0.05}"
+  local value=""
+  local last_line=""
+
+  while (( SECONDS < deadline )); do
+    last_line="$(promotion_telemetry_line 2>/dev/null || true)"
+    value="$(promotion_telemetry_value "$key" 2>/dev/null || true)"
+    if [[ -n "$value" ]] && (( value >= minimum )); then
+      return 0
+    fi
+    sleep "$poll_interval"
+  done
+
+  echo "error: timed out waiting for promotion telemetry $key >= $minimum" >&2
+  if [[ -n "$last_line" ]]; then
+    echo "last-promotion-telemetry: $last_line" >&2
+  fi
+  zig_hot promotion-telemetry 1>&2 || true
+  exit 1
 }
 
 expect_value() {
@@ -1675,10 +1728,16 @@ patch_run_zig_index_for_cell_probe R
 run_index_stress_reload_r="$(zig_hot reload "$RUN_ZIG_REL" "$run_index_start" "$run_index_end" 2>&1)"
 expect_hot_success "$run_index_stress_reload_r"
 expect_contains "$run_index_stress_reload_r" "decl=RunIterator.indexForCell;kind=function_decl"
+wait_for_promotion_telemetry_at_least "building" 1
 patch_run_zig_index_for_cell_probe S
 run_index_stress_reload_s="$(zig_hot reload "$RUN_ZIG_REL" "$run_index_start" "$run_index_end" 2>&1)"
 expect_hot_success "$run_index_stress_reload_s"
 expect_contains "$run_index_stress_reload_s" "decl=RunIterator.indexForCell;kind=function_decl"
+wait_for_promotion_telemetry_at_least "discarded-stale-total" 1
+promotion_telemetry_output="$(zig_hot promotion-telemetry 2>&1)"
+expect_hot_success "$promotion_telemetry_output"
+expect_contains "$promotion_telemetry_output" "discarded-stale-total="
+expect_contains "$promotion_telemetry_output" "worker-count=$HOT_TEST_PROMOTION_WORKERS"
 paste_ghostty_text "$runiter_index_stress_probe_text"
 expect_ghostty_ocr_contains "RUNITER_STRESS_QQRR!!!BBB"
 paste_ghostty_text "$runiter_next_probe_text"

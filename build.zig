@@ -264,6 +264,12 @@ pub fn build(b: *std.Build) !void {
                         b.fmt("{d}", .{hot_promotion_delay_ms}),
                     );
                 }
+                if (hot_promotion_workers != 0) {
+                    run_cmd.setEnvironmentVariable(
+                        "ZIG_HOT_PROMOTION_WORKERS",
+                        b.fmt("{d}", .{hot_promotion_workers}),
+                    );
+                }
                 const hot = try std.Build.Hot.init(b, .{
                     .name = "ghostty",
                     .root_module = exe.exe.root_module,
@@ -317,6 +323,12 @@ pub fn build(b: *std.Build) !void {
                     macos_app_native_only.open.setEnvironmentVariable(
                         "ZIG_HOT_PROMOTION_DELAY_MS",
                         b.fmt("{d}", .{hot_promotion_delay_ms}),
+                    );
+                }
+                if (hot_promotion_workers != 0) {
+                    macos_app_native_only.open.setEnvironmentVariable(
+                        "ZIG_HOT_PROMOTION_WORKERS",
+                        b.fmt("{d}", .{hot_promotion_workers}),
                     );
                 }
                 const hot = try std.Build.Hot.init(b, .{

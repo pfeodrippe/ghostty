@@ -38,6 +38,13 @@ HOT_COMPILER_BUILD_CACHE_DIR="${HOT_COMPILER_BUILD_CACHE_DIR:-$ROOT_DIR/.zig-hot
 HOT_COMPILER_GLOBAL_CACHE_DIR="${HOT_COMPILER_GLOBAL_CACHE_DIR:-$ROOT_DIR/.zig-hot-compiler-global-cache}"
 HOT_STANDALONE_BUILD_CACHE_DIR="${HOT_STANDALONE_BUILD_CACHE_DIR:-$ROOT_DIR/.zig-hot-standalone-build-cache}"
 HOT_STANDALONE_GLOBAL_CACHE_DIR="${HOT_STANDALONE_GLOBAL_CACHE_DIR:-$ROOT_DIR/.zig-hot-standalone-global-cache}"
+HOT_BUILD_CACHE_DIR="${HOT_BUILD_CACHE_DIR:-$ROOT_DIR/.zig-hot-build-cache}"
+HOT_THUNK_CACHE_DIR="${HOT_THUNK_CACHE_DIR:-$ROOT_DIR/.zig-hot-thunks}"
+HOT_COMPILER_BUILD_CACHE_MAX_GIB="${HOT_COMPILER_BUILD_CACHE_MAX_GIB:-24}"
+HOT_STANDALONE_BUILD_CACHE_MAX_GIB="${HOT_STANDALONE_BUILD_CACHE_MAX_GIB:-10}"
+HOT_BUILD_CACHE_MAX_GIB="${HOT_BUILD_CACHE_MAX_GIB:-24}"
+HOT_THUNK_CACHE_MAX_GIB="${HOT_THUNK_CACHE_MAX_GIB:-6}"
+HOT_CACHE_PRUNE_TOOL="${HOT_CACHE_PRUNE_TOOL:-$ROOT_DIR/tools/prune-hot-cache.sh}"
 HOT_STANDALONE_MIN_FREE_GIB="${HOT_STANDALONE_MIN_FREE_GIB:-20}"
 HOT_STANDALONE_TARGET_FREE_GIB="${HOT_STANDALONE_TARGET_FREE_GIB:-30}"
 HOT_COMPILER_TEST_FILTER="${HOT_COMPILER_TEST_FILTER:-}"
@@ -62,6 +69,7 @@ fi
 HOT_SMOKE_JOBS="${HOT_SMOKE_JOBS:-1}"
 PARALLEL_LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hot-compiler-test.XXXXXX")"
 HOT_STANDALONE_ZIG_WRAPPER="$PARALLEL_LOG_DIR/zig-standalone-wrapper"
+export ZIG_HOT_CACHE_DIR="${ZIG_HOT_CACHE_DIR:-$HOT_THUNK_CACHE_DIR}"
 
 cleanup_parallel_logs() {
   [[ -d "$PARALLEL_LOG_DIR" ]] || return 0
@@ -81,6 +89,14 @@ prune_runtime_path() {
   [[ -e "$path" ]] || return 0
   printf 'clean\t%s\n' "$path"
   rm -rf "$path"
+}
+
+trim_cache_dir() {
+  local path="$1"
+  local max_gib="$2"
+  local label="$3"
+  [[ -x "$HOT_CACHE_PRUNE_TOOL" ]] || return 0
+  "$HOT_CACHE_PRUNE_TOOL" "$path" "$max_gib" "$label"
 }
 
 disk_available_kib() {
@@ -240,13 +256,18 @@ else
       find "$ROOT_DIR/vendor/zig/test/standalone" -path '*/zig-out/share/zig-hot/*.config' -print
     } | sort -u
   )
+  # Zig build caches are not safe to prune entry-wise: removing individual cache
+  # outputs can leave manifests pointing at missing artifacts on the next build.
+  trim_cache_dir "$HOT_THUNK_CACHE_DIR" "$HOT_THUNK_CACHE_MAX_GIB" "hot thunk cache"
 fi
 
 mkdir -p \
   "$HOT_COMPILER_BUILD_CACHE_DIR" \
   "$HOT_COMPILER_GLOBAL_CACHE_DIR" \
   "$HOT_STANDALONE_BUILD_CACHE_DIR" \
-  "$HOT_STANDALONE_GLOBAL_CACHE_DIR"
+  "$HOT_STANDALONE_GLOBAL_CACHE_DIR" \
+  "$HOT_BUILD_CACHE_DIR" \
+  "$HOT_THUNK_CACHE_DIR"
 create_standalone_zig_wrapper
 
 run_test() {
