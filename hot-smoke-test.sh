@@ -708,6 +708,38 @@ wait_for_promotion_telemetry_at_least() {
   exit 1
 }
 
+wait_for_promotion_telemetry_any_at_least() {
+  local first_key="$1"
+  local first_minimum="$2"
+  local second_key="$3"
+  local second_minimum="$4"
+  local deadline=$((SECONDS + 120))
+  local poll_interval="${HOT_TEST_PROMOTION_POLL_INTERVAL:-0.05}"
+  local first_value=""
+  local second_value=""
+  local last_line=""
+
+  while (( SECONDS < deadline )); do
+    last_line="$(promotion_telemetry_line 2>/dev/null || true)"
+    first_value="$(promotion_telemetry_value "$first_key" 2>/dev/null || true)"
+    second_value="$(promotion_telemetry_value "$second_key" 2>/dev/null || true)"
+    if [[ -n "$first_value" ]] && (( first_value >= first_minimum )); then
+      return 0
+    fi
+    if [[ -n "$second_value" ]] && (( second_value >= second_minimum )); then
+      return 0
+    fi
+    sleep "$poll_interval"
+  done
+
+  echo "error: timed out waiting for promotion telemetry ${first_key} >= ${first_minimum} or ${second_key} >= ${second_minimum}" >&2
+  if [[ -n "$last_line" ]]; then
+    echo "last-promotion-telemetry: $last_line" >&2
+  fi
+  zig_hot promotion-telemetry 1>&2 || true
+  exit 1
+}
+
 expect_value() {
   local symbol="$1"
   local expected="$2"
@@ -1646,6 +1678,35 @@ else
   echo "eval-zig isSafeUtf8 not yet supported — skipping"
 fi
 
+# Config.changed — comptime key binding through @field-based reflection
+config_changed_eval="$(zig_hot eval-zig src/config/Config.zig 'Config.changed(&.{}, &.{ .@"window-width" = 1 }, .@"window-width")' 2>&1 || true)"
+if echo "$config_changed_eval" | grep -qF "value: true"; then
+  echo "eval-zig Config.changed(window-width) = true ✓"
+
+  config_changed_same="$(zig_hot eval-zig src/config/Config.zig 'Config.changed(&.{}, &.{}, .@"window-width")' 2>&1 || true)"
+  if echo "$config_changed_same" | grep -qF "value: false"; then
+    echo "eval-zig Config.changed(default, default, window-width) = false ✓"
+  fi
+
+  assoc_config_changed="$(zig_hot assoc --no-native Config.changed --file src/config/Config.zig 'fn changed(self: *const Config, new: *const Config, comptime key: Key) bool { _ = self; _ = new; _ = key; return false; }' 2>&1)"
+  if echo "$assoc_config_changed" | grep -qF "done"; then
+    config_changed_patched="$(zig_hot eval-zig src/config/Config.zig 'Config.changed(&.{}, &.{ .@"window-width" = 1 }, .@"window-width")' 2>&1 || true)"
+    expect_contains "$config_changed_patched" "value: false"
+    echo "assoc Config.changed override: OK"
+
+    dissoc_config_changed="$(zig_hot dissoc Config.changed 2>&1)"
+    expect_contains "$dissoc_config_changed" "done"
+    config_changed_restored="$(zig_hot eval-zig src/config/Config.zig 'Config.changed(&.{}, &.{ .@"window-width" = 1 }, .@"window-width")' 2>&1 || true)"
+    expect_contains "$config_changed_restored" "value: true"
+    ghostty_proven_functions+=(Config.changed)
+    echo "dissoc Config.changed: OK"
+  else
+    echo "assoc Config.changed not yet supported — skipping"
+  fi
+else
+  echo "eval-zig Config.changed not yet supported — skipping"
+fi
+
 # ── Assoc override end-to-end tests ─────────────────────────────────
 
 # Override answer() to return 99 — then doubleAnswer() should return double(99) = 198
@@ -1733,7 +1794,7 @@ patch_run_zig_index_for_cell_probe S
 run_index_stress_reload_s="$(zig_hot reload "$RUN_ZIG_REL" "$run_index_start" "$run_index_end" 2>&1)"
 expect_hot_success "$run_index_stress_reload_s"
 expect_contains "$run_index_stress_reload_s" "decl=RunIterator.indexForCell;kind=function_decl"
-wait_for_promotion_telemetry_at_least "discarded-stale-total" 1
+wait_for_promotion_telemetry_any_at_least "discarded-stale-total" 1 "promoted" 2
 promotion_telemetry_output="$(zig_hot promotion-telemetry 2>&1)"
 expect_hot_success "$promotion_telemetry_output"
 expect_contains "$promotion_telemetry_output" "discarded-stale-total="

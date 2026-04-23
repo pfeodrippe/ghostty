@@ -9,6 +9,7 @@
 - [ ] https://github.com/neurocyte/flow
 - [ ] quint support checking in the hot zig compiler
 - [ ] add flecs to be aware of all of that
+- [ ] jzig ?
 
 ## Old todo
 

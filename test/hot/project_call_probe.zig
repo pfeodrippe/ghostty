@@ -1,6 +1,7 @@
 // These wrappers intentionally call real project code so smoke tests can probe
 // downstream hot behavior without modifying app sources.
 
+const std = @import("std");
 const apprt = @import("../../src/apprt.zig");
 const action = @import("../../src/apprt/action.zig");
 const global = @import("../../src/global.zig");
