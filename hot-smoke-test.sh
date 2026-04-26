@@ -1088,6 +1088,17 @@ expect_contains "$field_output" "  done"
 
 expect_value "os.flatpak.isFlatpak" "false"
 expect_value "os.desktop.launchedFromDesktop" "false"
+launched_from_desktop_assoc="$(zig_hot assoc --no-native launchedFromDesktop --file src/os/desktop.zig 'pub fn launchedFromDesktop() bool { return true; }' 2>&1)"
+expect_contains "$launched_from_desktop_assoc" "done"
+expect_value "os.desktop.launchedFromDesktop" "true"
+echo "assoc launchedFromDesktop override: OK"
+
+dissoc_launched_from_desktop="$(zig_hot dissoc launchedFromDesktop 2>&1)"
+expect_contains "$dissoc_launched_from_desktop" "done"
+expect_value "os.desktop.launchedFromDesktop" "false"
+ghostty_proven_functions+=(launchedFromDesktop)
+echo "dissoc launchedFromDesktop: OK"
+
 expect_value "os.env.setenv" "0" '"GHOSTTY_HOT_SMOKE"' '"1"'
 expect_value "os.env.unsetenv" "0" '"GHOSTTY_HOT_SMOKE"'
 expect_value "simd.codepoint_width.codepointWidth" "1" 65
@@ -1680,32 +1691,29 @@ fi
 
 # Config.changed — comptime key binding through @field-based reflection
 config_changed_eval="$(zig_hot eval-zig src/config/Config.zig 'Config.changed(&.{}, &.{ .@"window-width" = 1 }, .@"window-width")' 2>&1 || true)"
-if echo "$config_changed_eval" | grep -qF "value: true"; then
-  echo "eval-zig Config.changed(window-width) = true ✓"
+expect_hot_success "$config_changed_eval"
+expect_contains "$config_changed_eval" "value: true"
+echo "eval-zig Config.changed(window-width) = true ✓"
 
-  config_changed_same="$(zig_hot eval-zig src/config/Config.zig 'Config.changed(&.{}, &.{}, .@"window-width")' 2>&1 || true)"
-  if echo "$config_changed_same" | grep -qF "value: false"; then
-    echo "eval-zig Config.changed(default, default, window-width) = false ✓"
-  fi
+config_changed_same="$(zig_hot eval-zig src/config/Config.zig 'Config.changed(&.{}, &.{}, .@"window-width")' 2>&1 || true)"
+expect_hot_success "$config_changed_same"
+expect_contains "$config_changed_same" "value: false"
+echo "eval-zig Config.changed(default, default, window-width) = false ✓"
 
-  assoc_config_changed="$(zig_hot assoc --no-native Config.changed --file src/config/Config.zig 'fn changed(self: *const Config, new: *const Config, comptime key: Key) bool { _ = self; _ = new; _ = key; return false; }' 2>&1)"
-  if echo "$assoc_config_changed" | grep -qF "done"; then
-    config_changed_patched="$(zig_hot eval-zig src/config/Config.zig 'Config.changed(&.{}, &.{ .@"window-width" = 1 }, .@"window-width")' 2>&1 || true)"
-    expect_contains "$config_changed_patched" "value: false"
-    echo "assoc Config.changed override: OK"
+assoc_config_changed="$(zig_hot assoc --no-native Config.changed --file src/config/Config.zig 'fn changed(self: *const Config, new: *const Config, comptime key: Key) bool { _ = self; _ = new; _ = key; return false; }' 2>&1)"
+expect_hot_success "$assoc_config_changed"
+config_changed_patched="$(zig_hot eval-zig src/config/Config.zig 'Config.changed(&.{}, &.{ .@"window-width" = 1 }, .@"window-width")' 2>&1 || true)"
+expect_hot_success "$config_changed_patched"
+expect_contains "$config_changed_patched" "value: false"
+echo "assoc Config.changed override: OK"
 
-    dissoc_config_changed="$(zig_hot dissoc Config.changed 2>&1)"
-    expect_contains "$dissoc_config_changed" "done"
-    config_changed_restored="$(zig_hot eval-zig src/config/Config.zig 'Config.changed(&.{}, &.{ .@"window-width" = 1 }, .@"window-width")' 2>&1 || true)"
-    expect_contains "$config_changed_restored" "value: true"
-    ghostty_proven_functions+=(Config.changed)
-    echo "dissoc Config.changed: OK"
-  else
-    echo "assoc Config.changed not yet supported — skipping"
-  fi
-else
-  echo "eval-zig Config.changed not yet supported — skipping"
-fi
+dissoc_config_changed="$(zig_hot dissoc Config.changed 2>&1)"
+expect_hot_success "$dissoc_config_changed"
+config_changed_restored="$(zig_hot eval-zig src/config/Config.zig 'Config.changed(&.{}, &.{ .@"window-width" = 1 }, .@"window-width")' 2>&1 || true)"
+expect_hot_success "$config_changed_restored"
+expect_contains "$config_changed_restored" "value: true"
+ghostty_proven_functions+=(Config.changed)
+echo "dissoc Config.changed: OK"
 
 # ── Assoc override end-to-end tests ─────────────────────────────────
 

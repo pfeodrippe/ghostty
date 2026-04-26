@@ -99,6 +99,23 @@ trim_cache_dir() {
   "$HOT_CACHE_PRUNE_TOOL" "$path" "$max_gib" "$label"
 }
 
+reset_build_cache_dir() {
+  local path="$1"
+  local max_gib="$2"
+  local label="$3"
+  [[ -d "$path" ]] || return 0
+  (( max_gib > 0 )) || return 0
+  local max_kib=$((max_gib * 1024 * 1024))
+  local size_kib
+  size_kib="$(du -sk "$path" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+  [[ -n "$size_kib" ]] || return 0
+  if (( size_kib <= max_kib )); then
+    return 0
+  fi
+  printf 'clean\t%s\t(%s exceeded %sGiB)\n' "$path" "$label" "$max_gib"
+  rm -rf "$path"
+}
+
 disk_available_kib() {
   df -Pk "$ROOT_DIR" | awk 'NR == 2 { print $4 }'
 }
@@ -258,6 +275,8 @@ else
   )
   # Zig build caches are not safe to prune entry-wise: removing individual cache
   # outputs can leave manifests pointing at missing artifacts on the next build.
+  reset_build_cache_dir "$HOT_COMPILER_BUILD_CACHE_DIR" "$HOT_COMPILER_BUILD_CACHE_MAX_GIB" "hot compiler build cache"
+  reset_build_cache_dir "$HOT_STANDALONE_BUILD_CACHE_DIR" "$HOT_STANDALONE_BUILD_CACHE_MAX_GIB" "hot standalone build cache"
   trim_cache_dir "$HOT_THUNK_CACHE_DIR" "$HOT_THUNK_CACHE_MAX_GIB" "hot thunk cache"
 fi
 
