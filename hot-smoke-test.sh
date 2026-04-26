@@ -1185,9 +1185,9 @@ expect_contains "$classify_structs_output" "guidance=reload-dependents"
 
 classify_split_tree_output="$(zig_hot classify src/datastruct/split_tree.zig 2>&1)"
 expect_contains "$classify_split_tree_output" "name=SplitTree.refNodes body-class=interpreter-ready live-path=dispatch-cell"
-expect_contains "$classify_split_tree_output" "name=SplitTree.goto body-class=native-only live-path=native-patch-candidate reason=defer-cleanup boundary=restricted-vm-candidate guidance=widen-restricted-vm"
+expect_contains "$classify_split_tree_output" "name=SplitTree.goto body-class=interpreter-ready live-path=dispatch-cell"
 expect_contains "$classify_split_tree_output" "name=SplitTree.split body-class=native-only live-path=native-patch-candidate reason=memory-effect-builtin boundary=restricted-vm-candidate guidance=widen-restricted-vm"
-echo "split_tree cleanup frontier classify proof: OK"
+echo "split_tree scoped-cleanup classify proof: OK"
 
 invalidate_config_output="$(zig_hot invalidate src/config/Config.zig 2>&1)"
 expect_contains "$invalidate_config_output" "impact:"
