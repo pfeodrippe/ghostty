@@ -330,7 +330,7 @@ test-hot-all:
 		tb_log=$$(mktemp "$${TMPDIR:-/tmp}/tigerbeetle-hot-test.XXXXXX"); \
 		tb_time=$$(mktemp "$${TMPDIR:-/tmp}/tigerbeetle-hot-time.XXXXXX"); \
 		( ghost_start=$$SECONDS; \
-		  "$(MAKE)" HOT_TEST_CLEAN="$(HOT_TEST_CLEAN)" hot-test >"$$ghost_log" 2>&1; \
+		  PORT_FILE_TIMEOUT="$${PORT_FILE_TIMEOUT:-900}" "$(MAKE)" HOT_TEST_CLEAN="$(HOT_TEST_CLEAN)" hot-test >"$$ghost_log" 2>&1; \
 		  printf "%s\n" "$$((SECONDS - ghost_start))" >"$$ghost_time" ) & \
 		ghost_pid=$$!; \
 		( tb_start=$$SECONDS; \

@@ -1183,6 +1183,12 @@ expect_contains "$classify_structs_output" "reason=union-container"
 expect_contains "$classify_structs_output" "boundary=versioned-only"
 expect_contains "$classify_structs_output" "guidance=reload-dependents"
 
+classify_split_tree_output="$(zig_hot classify src/datastruct/split_tree.zig 2>&1)"
+expect_contains "$classify_split_tree_output" "name=SplitTree.refNodes body-class=interpreter-ready live-path=dispatch-cell"
+expect_contains "$classify_split_tree_output" "name=SplitTree.goto body-class=native-only live-path=native-patch-candidate reason=defer-cleanup boundary=restricted-vm-candidate guidance=widen-restricted-vm"
+expect_contains "$classify_split_tree_output" "name=SplitTree.split body-class=native-only live-path=native-patch-candidate reason=memory-effect-builtin boundary=restricted-vm-candidate guidance=widen-restricted-vm"
+echo "split_tree cleanup frontier classify proof: OK"
+
 invalidate_config_output="$(zig_hot invalidate src/config/Config.zig 2>&1)"
 expect_contains "$invalidate_config_output" "impact:"
 expect_contains "$invalidate_config_output" "decl-key=owner=root;file=$ROOT_DIR/src/config/key.zig;decl=Key;kind=const_decl reason=comptime_dep"
@@ -1196,6 +1202,16 @@ clipboard_probe_output="$(zig_hot compile-body test/hot/project_call_probe.zig g
 expect_hot_success "$clipboard_probe_output"
 expect_contains "$clipboard_probe_output" "value: 1"
 echo "ClipboardRequest wrapper probe: OK"
+
+split_tree_cleanup_probe_output="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttySplitTreeCleanupWrapperProbe 2>&1)"
+expect_contains "$split_tree_cleanup_probe_output" "fn: ghosttySplitTreeCleanupWrapperProbe"
+expect_contains "$split_tree_cleanup_probe_output" "err: execute failed: UndefinedGlobal"
+echo "SplitTree cleanup wrapper allocator-global boundary proof: OK"
+
+split_tree_nested_method_probe_output="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttySplitTreeNestedMethodProbe 2>&1)"
+expect_hot_success "$split_tree_nested_method_probe_output"
+expect_contains "$split_tree_nested_method_probe_output" "value: 1"
+echo "SplitTree returned-container nested method probe: OK"
 
     # Compile and execute a simple function body via nREPL
     compile_output="$(zig_hot compile-body test/hot/body_fixture.zig answer 2>&1)"
