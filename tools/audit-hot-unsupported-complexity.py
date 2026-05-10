@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import concurrent.futures
 import dataclasses
 import os
 import subprocess
@@ -92,8 +93,17 @@ def ensure_driver() -> None:
             pass
 
 
-def classify_file(path: Path) -> tuple[int, int, int, tuple[BlockedDecl, ...], collections.Counter[str]]:
-    output = subprocess.check_output([str(DRIVER_BIN), str(path)], cwd=ROOT, text=True, stderr=subprocess.DEVNULL)
+def classify_file(
+    path: Path,
+    timeout_seconds: float | None = None,
+) -> tuple[int, int, int, tuple[BlockedDecl, ...], collections.Counter[str]]:
+    output = subprocess.check_output(
+        [str(DRIVER_BIN), str(path)],
+        cwd=ROOT,
+        text=True,
+        stderr=subprocess.DEVNULL,
+        timeout=timeout_seconds,
+    )
     supported_functions = 0
     value_cells = 0
     invalidated = 0
@@ -119,32 +129,71 @@ def classify_file(path: Path) -> tuple[int, int, int, tuple[BlockedDecl, ...], c
     return supported_functions, value_cells, invalidated, tuple(blocked), reasons
 
 
-def scan_project(project: str, root: Path) -> list[FileRank]:
+def zig_source_paths(root: Path) -> list[Path]:
+    return [
+        path
+        for path in sorted(root.rglob("*.zig"))
+        if not any(part in {".zig-cache", "zig-cache", "zig-out"} for part in path.parts)
+    ]
+
+
+def rank_file(
+    project: str,
+    path: Path,
+    timeout_seconds: float | None,
+) -> FileRank | None:
+    try:
+        supported, value_cells, invalidated, blocked, reasons = classify_file(path, timeout_seconds)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    if not blocked:
+        return None
+    loc = sum(1 for _ in path.open(errors="ignore"))
+    return FileRank(
+        project=project,
+        path=path,
+        loc=loc,
+        supported_functions=supported,
+        value_cells=value_cells,
+        invalidated=invalidated,
+        blocked=blocked,
+        reasons=reasons,
+    )
+
+
+def scan_project(project: str, root: Path, jobs: int, timeout_seconds: float | None) -> list[FileRank]:
     ranks: list[FileRank] = []
-    for path in sorted(root.rglob("*.zig")):
-        if any(part in {".zig-cache", "zig-cache", "zig-out"} for part in path.parts):
-            continue
-        try:
-            supported, value_cells, invalidated, blocked, reasons = classify_file(path)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            continue
-        if not blocked:
-            continue
-        loc = sum(1 for _ in path.open(errors="ignore"))
-        ranks.append(
-            FileRank(
-                project=project,
-                path=path,
-                loc=loc,
-                supported_functions=supported,
-                value_cells=value_cells,
-                invalidated=invalidated,
-                blocked=blocked,
-                reasons=reasons,
-            )
-        )
+    paths = zig_source_paths(root)
+    if jobs <= 1 or len(paths) <= 1:
+        for path in paths:
+            rank = rank_file(project, path, timeout_seconds)
+            if rank is not None:
+                ranks.append(rank)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
+            futures = [
+                executor.submit(rank_file, project, path, timeout_seconds)
+                for path in paths
+            ]
+            for future in concurrent.futures.as_completed(futures):
+                rank = future.result()
+                if rank is not None:
+                    ranks.append(rank)
     ranks.sort(key=lambda item: item.score, reverse=True)
     return ranks
+
+
+def default_jobs() -> int:
+    env_value = os.environ.get("HOT_UNSUPPORTED_AUDIT_JOBS")
+    if env_value:
+        try:
+            return max(1, int(env_value))
+        except ValueError:
+            raise SystemExit(f"invalid HOT_UNSUPPORTED_AUDIT_JOBS: {env_value!r}")
+
+    # Each worker is a separate Zig classifier process. Keep the default bounded
+    # so the audit gets real wall-clock parallelism without surprising RAM use.
+    return max(1, min(4, os.cpu_count() or 1))
 
 
 def reason_summary(reasons: collections.Counter[str]) -> str:
@@ -173,7 +222,23 @@ def emit_markdown(project: str, ranks: list[FileRank], limit: int) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Rank hot-reload unsupported Zig files by classifier complexity.")
     parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=default_jobs(),
+        help="number of classifier subprocesses to run concurrently (default: min(4, cpu count), or HOT_UNSUPPORTED_AUDIT_JOBS)",
+    )
+    parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=0,
+        help="optional per-file classifier timeout; 0 disables the timeout",
+    )
     args = parser.parse_args()
+    if args.jobs < 1:
+        parser.error("--jobs must be >= 1")
+
+    timeout_seconds = args.timeout_seconds if args.timeout_seconds > 0 else None
 
     ensure_driver()
     projects = (
@@ -181,7 +246,7 @@ def main() -> int:
         ("TigerBeetle", ROOT / "vendor/tigerbeetle/src"),
     )
     for project, path in projects:
-        sys.stdout.write(emit_markdown(project, scan_project(project, path), args.limit))
+        sys.stdout.write(emit_markdown(project, scan_project(project, path, args.jobs, timeout_seconds), args.limit))
     return 0
 
 
