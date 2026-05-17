@@ -1804,14 +1804,23 @@ expect_contains "$clipboard_probe_output" "value: 1"
 echo "ClipboardRequest wrapper probe: OK"
 
 split_tree_cleanup_probe_output="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttySplitTreeCleanupWrapperProbe 2>&1)"
-expect_contains "$split_tree_cleanup_probe_output" "fn: ghosttySplitTreeCleanupWrapperProbe"
-expect_contains "$split_tree_cleanup_probe_output" "err: execute failed: UndefinedGlobal"
-echo "SplitTree cleanup wrapper allocator-global boundary proof: OK"
+expect_hot_success "$split_tree_cleanup_probe_output"
+expect_contains "$split_tree_cleanup_probe_output" "value: 2"
+echo "SplitTree cleanup wrapper constructor execution: OK"
+
+check_hot_probe "SplitTree cleanup wrapper hot reload" test/hot/project_call_probe.zig ghosttySplitTreeCleanupWrapperProbe 'ghosttySplitTreeCleanupWrapperProbe()' 2 'pub fn ghosttySplitTreeCleanupWrapperProbe() i64 { return 902; }' 902
 
 split_tree_nested_method_probe_output="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttySplitTreeNestedMethodProbe 2>&1)"
 expect_hot_success "$split_tree_nested_method_probe_output"
 expect_contains "$split_tree_nested_method_probe_output" "value: 1"
 echo "SplitTree returned-container nested method probe: OK"
+
+allocator_memset_probe_output="$(zig_hot compile-body test/hot/project_call_probe.zig ghosttyAllocatorMemsetErrorUnionProbe 2>&1)"
+expect_hot_success "$allocator_memset_probe_output"
+expect_contains "$allocator_memset_probe_output" "value: 3"
+echo "allocator/catch @memset inferred enum-literal fill probe: OK"
+
+check_hot_probe "allocator/catch memset hot reload" test/hot/project_call_probe.zig ghosttyAllocatorMemsetErrorUnionProbe 'ghosttyAllocatorMemsetErrorUnionProbe()' 3 'pub fn ghosttyAllocatorMemsetErrorUnionProbe() i64 { return 903; }' 903
 
     # Compile and execute a simple function body via nREPL
     compile_output="$(zig_hot compile-body test/hot/body_fixture.zig answer 2>&1)"
@@ -1931,7 +1940,7 @@ fi
 # RGB.contrast — transitive chain: contrast → luminance → componentLuminance
 # Black vs White should give maximum contrast ~21.0
 contrast_eval="$(zig_hot eval-zig src/terminal/color.zig 'RGB.contrast(RGB{.r=0,.g=0,.b=0}, RGB{.r=255,.g=255,.b=255})' 2>&1 || true)"
-if echo "$contrast_eval" | grep -qF "value: 13"; then
+if echo "$contrast_eval" | grep -qF "value: 21"; then
   echo "eval-zig RGB.contrast(black, white) = 21.0 ✓"
 
   # assoc override: make contrast always return 1.0
@@ -1941,23 +1950,31 @@ if echo "$contrast_eval" | grep -qF "value: 13"; then
     if echo "$contrast_patched" | grep -qE "value: 1"; then
       echo "assoc RGB.contrast override (always 1.0): OK"
     else
-      echo "assoc RGB.contrast override returned unexpected: $(echo "$contrast_patched" | grep 'value:' | head -1) — skipping"
+      echo "error: assoc RGB.contrast override returned unexpected" >&2
+      echo "$contrast_patched" >&2
+      exit 1
     fi
 
     dissoc_contrast="$(zig_hot dissoc RGB.contrast 2>&1)"
     if echo "$dissoc_contrast" | grep -qF "done"; then
       contrast_restored="$(zig_hot eval-zig src/terminal/color.zig 'RGB.contrast(RGB{.r=0,.g=0,.b=0}, RGB{.r=255,.g=255,.b=255})' 2>&1 || true)"
-      if echo "$contrast_restored" | grep -qF "value: 13"; then
+      if echo "$contrast_restored" | grep -qF "value: 21"; then
         echo "dissoc RGB.contrast restores original: OK"
       else
-        echo "dissoc RGB.contrast unexpected: $(echo "$contrast_restored" | grep 'value:' | head -1) — skipping"
+        echo "error: dissoc RGB.contrast unexpected" >&2
+        echo "$contrast_restored" >&2
+        exit 1
       fi
     fi
   else
-    echo "assoc RGB.contrast not yet supported — skipping"
+    echo "error: assoc RGB.contrast failed" >&2
+    echo "$assoc_contrast" >&2
+    exit 1
   fi
 else
-  echo "eval-zig RGB.contrast not yet supported — skipping assoc/dissoc"
+  echo "error: eval-zig RGB.contrast failed or returned unexpected value" >&2
+  echo "$contrast_eval" >&2
+  exit 1
 fi
 
 # ── eval-zig proofs for renderer size functions (Phase 61A Batch 3) ──
@@ -2081,10 +2098,14 @@ if echo "$grid_init_eval" | grep -qF "value: 3"; then
     expect_contains "$grid_init_restored" "value: 3"
     echo "dissoc GridSize.init: OK"
   else
-    echo "assoc GridSize.init not yet supported — skipping"
+    echo "error: assoc GridSize.init failed" >&2
+    echo "$assoc_grid_init" >&2
+    exit 1
   fi
 else
-  echo "eval-zig GridSize.init not yet supported — skipping"
+  echo "error: eval-zig GridSize.init failed or returned unexpected value" >&2
+  echo "$grid_init_eval" >&2
+  exit 1
 fi
 
 # ScreenSize.subPadding — saturating subtraction across struct fields
@@ -2279,31 +2300,24 @@ fi
 
 # isSafeUtf8 — UTF-8 iteration plus control-code filtering
 safe_utf8_eval="$(zig_hot eval-zig src/terminal/osc/encoding.zig 'isSafeUtf8("Hello world!")' 2>&1 || true)"
-if echo "$safe_utf8_eval" | grep -qF "value: true"; then
-  echo "eval-zig isSafeUtf8(\"Hello world!\") = true ✓"
+expect_contains "$safe_utf8_eval" "value: true"
+echo "eval-zig isSafeUtf8(\"Hello world!\") = true ✓"
 
-  unsafe_utf8_eval="$(zig_hot eval-zig src/terminal/osc/encoding.zig 'isSafeUtf8("line1\nline2")' 2>&1 || true)"
-  if echo "$unsafe_utf8_eval" | grep -qF "value: false"; then
-    echo "eval-zig isSafeUtf8(\"line1\\nline2\") = false ✓"
-  fi
+unsafe_utf8_eval="$(zig_hot eval-zig src/terminal/osc/encoding.zig 'isSafeUtf8("line1\nline2")' 2>&1 || true)"
+expect_contains "$unsafe_utf8_eval" "value: false"
+echo "eval-zig isSafeUtf8(\"line1\\nline2\") = false ✓"
 
-  assoc_safe_utf8="$(zig_hot assoc --no-native isSafeUtf8 --file src/terminal/osc/encoding.zig 'fn isSafeUtf8(s: []const u8) bool { _ = s; return false; }' 2>&1)"
-  if echo "$assoc_safe_utf8" | grep -qF "done"; then
-    safe_utf8_patched="$(zig_hot eval-zig src/terminal/osc/encoding.zig 'isSafeUtf8("Hello world!")' 2>&1 || true)"
-    expect_contains "$safe_utf8_patched" "value: false"
-    echo "assoc isSafeUtf8 override: OK"
+assoc_safe_utf8="$(zig_hot assoc --no-native isSafeUtf8 --file src/terminal/osc/encoding.zig 'fn isSafeUtf8(s: []const u8) bool { _ = s; return false; }' 2>&1)"
+expect_hot_success "$assoc_safe_utf8"
+safe_utf8_patched="$(zig_hot eval-zig src/terminal/osc/encoding.zig 'isSafeUtf8("Hello world!")' 2>&1 || true)"
+expect_contains "$safe_utf8_patched" "value: false"
+echo "assoc isSafeUtf8 override: OK"
 
-    dissoc_safe_utf8="$(zig_hot dissoc isSafeUtf8 2>&1)"
-    expect_contains "$dissoc_safe_utf8" "done"
-    safe_utf8_restored="$(zig_hot eval-zig src/terminal/osc/encoding.zig 'isSafeUtf8("Hello world!")' 2>&1 || true)"
-    expect_contains "$safe_utf8_restored" "value: true"
-    echo "dissoc isSafeUtf8: OK"
-  else
-    echo "assoc isSafeUtf8 not yet supported — skipping"
-  fi
-else
-  echo "eval-zig isSafeUtf8 not yet supported — skipping"
-fi
+dissoc_safe_utf8="$(zig_hot dissoc isSafeUtf8 2>&1)"
+expect_hot_success "$dissoc_safe_utf8"
+safe_utf8_restored="$(zig_hot eval-zig src/terminal/osc/encoding.zig 'isSafeUtf8("Hello world!")' 2>&1 || true)"
+expect_contains "$safe_utf8_restored" "value: true"
+echo "dissoc isSafeUtf8: OK"
 
 # Config.changed — comptime key binding through @field-based reflection
 config_changed_eval="$(zig_hot eval-zig src/config/Config.zig 'Config.changed(&.{}, &.{ .@"window-width" = 1 }, .@"window-width")' 2>&1 || true)"
@@ -2609,6 +2623,15 @@ check_nonexistent_assoc_preserves_probe \
   "read_after_bump(40)" \
   "42" \
   "pub fn totally_bogus_function_xyz() i64 { return 12345; }"
+
+check_hot_probe \
+  "imported source-backed layout" \
+  "test/hot/layout_source_probe.zig" \
+  "imported_layout_size_score" \
+  "imported_layout_size_score(10)" \
+  "34" \
+  "pub fn imported_layout_size_score(seed: i64) i64 { return seed + 700; }" \
+  "710"
 
 # ── Assoc with malformed code — should not crash ──────────────────────
 
