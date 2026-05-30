@@ -337,6 +337,7 @@ pub fn build(b: *std.Build) !void {
                     .main_executable = .{ .cwd_relative = hot_executable },
                     .promotion_workers = if (hot_promotion_workers == 0) null else hot_promotion_workers,
                 });
+                hot.config.step.dependOn(&macos_app_native_only.build.step);
                 hot.configureRun(macos_app_native_only.open);
             }
             run_step.dependOn(&macos_app_native_only.open.step);

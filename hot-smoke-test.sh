@@ -683,6 +683,32 @@ check_hot_probe() {
   echo "assoc/dissoc $label function: OK"
 }
 
+check_wide_marshal_probes() {
+  local file="$1"
+  local label_prefix="$2"
+
+  check_hot_probe "$label_prefix u128 direct return" "$file" hot_wide_01_direct '@as(u64, @intCast(hot_wide_01_direct(5)))' 106 'pub fn hot_wide_01_direct(seed: u64) u128 { _ = seed; return 901; }' 901
+  check_hot_probe "$label_prefix i128 direct return" "$file" hot_wide_02_signed '@as(i64, @intCast(hot_wide_02_signed(5)))' 207 'pub fn hot_wide_02_signed(seed: i64) i128 { _ = seed; return 902; }' 902
+  check_hot_probe "$label_prefix u128 array first" "$file" hot_wide_03_array_first '@as(u64, @intCast(hot_wide_03_array_first(5)[0]))' 308 'pub fn hot_wide_03_array_first(seed: u64) [3]u128 { _ = seed; return .{ 903, 0, 0 }; }' 903
+  check_hot_probe "$label_prefix u128 array second" "$file" hot_wide_04_array_second '@as(u64, @intCast(hot_wide_04_array_second(5)[1]))' 409 'pub fn hot_wide_04_array_second(seed: u64) [3]u128 { _ = seed; return .{ 0, 904, 0 }; }' 904
+  check_hot_probe "$label_prefix struct primary" "$file" hot_wide_05_struct_primary '@as(u64, @intCast(hot_wide_05_struct_primary(5).primary))' 510 'pub fn hot_wide_05_struct_primary(seed: u64) HotWidePair { _ = seed; return .{ .primary = 905, .secondary = 0 }; }' 905
+  check_hot_probe "$label_prefix struct secondary" "$file" hot_wide_06_struct_secondary '@as(u64, @intCast(hot_wide_06_struct_secondary(5).secondary))' 611 'pub fn hot_wide_06_struct_secondary(seed: u64) HotWidePair { _ = seed; return .{ .primary = 0, .secondary = 906 }; }' 906
+  check_hot_probe "$label_prefix nested pair field" "$file" hot_wide_07_nested_pair '@as(u64, @intCast(hot_wide_07_nested_pair(5).pair.secondary))' 712 'pub fn hot_wide_07_nested_pair(seed: u64) HotWideNested { _ = seed; return .{ .pair = .{ .primary = 0, .secondary = 907 }, .extra = 0 }; }' 907
+  check_hot_probe "$label_prefix nested extra field" "$file" hot_wide_08_nested_extra '@as(u64, @intCast(hot_wide_08_nested_extra(5).extra))' 813 'pub fn hot_wide_08_nested_extra(seed: u64) HotWideNested { _ = seed; return .{ .pair = .{ .primary = 0, .secondary = 0 }, .extra = 908 }; }' 908
+  check_hot_probe "$label_prefix optional u128" "$file" hot_wide_09_optional '@as(u64, @intCast(hot_wide_09_optional(5).?))' 914 'pub fn hot_wide_09_optional(seed: u64) ?u128 { _ = seed; return 909; }' 909
+  check_hot_probe "$label_prefix error-union u128" "$file" hot_wide_10_error_ok '@as(u64, @intCast(hot_wide_10_error_ok(5) catch 0))' 1015 'pub fn hot_wide_10_error_ok(seed: u64) HotWideError!u128 { _ = seed; return 910; }' 910
+  check_hot_probe "$label_prefix tagged union u128" "$file" hot_wide_11_union_wide '@as(u64, @intCast(switch (hot_wide_11_union_wide(5)) { .wide => |value| value, else => 0 }))' 1116 'pub fn hot_wide_11_union_wide(seed: u64) HotWideUnion { _ = seed; return .{ .wide = 911 }; }' 911
+  check_hot_probe "$label_prefix tagged union i128" "$file" hot_wide_12_union_signed '@as(i64, @intCast(switch (hot_wide_12_union_signed(5)) { .signed => |value| value, else => 0 }))' 1217 'pub fn hot_wide_12_union_signed(seed: i64) HotWideUnion { _ = seed; return .{ .signed = 912 }; }' 912
+  check_hot_probe "$label_prefix optional field" "$file" hot_wide_13_optional_field '@as(u64, @intCast(hot_wide_13_optional_field(5).value.?))' 1318 'pub fn hot_wide_13_optional_field(seed: u64) HotWideOptional { _ = seed; return .{ .value = 913 }; }' 913
+  check_hot_probe "$label_prefix struct array field" "$file" hot_wide_14_struct_array '@as(u64, @intCast(hot_wide_14_struct_array(5).items[1]))' 1419 'pub fn hot_wide_14_struct_array(seed: u64) HotWideArray { _ = seed; return .{ .items = .{ 0, 914 } }; }' 914
+  check_hot_probe "$label_prefix array of structs" "$file" hot_wide_15_array_of_struct '@as(u64, @intCast(hot_wide_15_array_of_struct(5)[1].secondary))' 1520 'pub fn hot_wide_15_array_of_struct(seed: u64) [2]HotWidePair { _ = seed; return .{ .{ .primary = 0, .secondary = 0 }, .{ .primary = 0, .secondary = 915 } }; }' 915
+  check_hot_probe "$label_prefix array argument" "$file" hot_wide_16_arg_array 'hot_wide_16_arg_array([2]u128{ 3, 4 })' 7 'pub fn hot_wide_16_arg_array(items: [2]u128) u64 { _ = items; return 916; }' 916
+  check_hot_probe "$label_prefix struct argument" "$file" hot_wide_17_arg_struct 'hot_wide_17_arg_struct(.{ .primary = 8, .secondary = 9 })' 17 'pub fn hot_wide_17_arg_struct(pair: HotWidePair) u64 { _ = pair; return 917; }' 917
+  check_hot_probe "$label_prefix optional argument" "$file" hot_wide_18_arg_optional 'hot_wide_18_arg_optional(18)' 18 'pub fn hot_wide_18_arg_optional(value: ?u128) u64 { _ = value; return 918; }' 918
+  check_hot_probe "$label_prefix error-union struct" "$file" hot_wide_19_error_pair '@as(u64, @intCast((hot_wide_19_error_pair(5) catch .{ .primary = 0, .secondary = 0 }).secondary))' 1924 'pub fn hot_wide_19_error_pair(seed: u64) HotWideError!HotWidePair { _ = seed; return .{ .primary = 0, .secondary = 919 }; }' 919
+  check_hot_probe "$label_prefix optional array" "$file" hot_wide_20_optional_array '@as(u64, @intCast(hot_wide_20_optional_array(5).?[0]))' 2025 'pub fn hot_wide_20_optional_array(seed: u64) ?[2]u128 { _ = seed; return .{ 920, 0 }; }' 920
+}
+
 check_failed_assoc_preserves_current_probe() {
   local label="$1"
   local file="$2"
@@ -1221,6 +1247,8 @@ expect_contains "$dissoc_launched_from_desktop" "done"
 expect_value "os.desktop.launchedFromDesktop" "false"
 ghostty_proven_functions+=(launchedFromDesktop)
 echo "dissoc launchedFromDesktop: OK"
+
+check_wide_marshal_probes test/hot/local_pointer_alias_probe.zig "Ghostty wide marshal"
 
 ghostty_pointer_alias_baseline="$(zig_hot eval-zig test/hot/local_pointer_alias_probe.zig 'read_after_bump(40)' 2>&1)"
 expect_hot_success "$ghostty_pointer_alias_baseline"
@@ -1871,7 +1899,8 @@ if echo "$eql_baseline" | grep -qF "value: true"; then
   if echo "$eql_neq" | grep -qF "value: false"; then
     echo "eval-zig RGB.eql baseline (not equal): false ✓"
   else
-    echo "eval-zig RGB.eql (not equal) not yet supported — skipping"
+    echo "error: eval-zig RGB.eql (not equal) not yet supported" >&2
+    exit 1
   fi
 
   # assoc override: make eql always return false
@@ -1881,7 +1910,9 @@ if echo "$eql_baseline" | grep -qF "value: true"; then
     if echo "$eql_patched" | grep -qF "value: false"; then
       echo "assoc RGB.eql override (always false): OK"
     else
-      echo "assoc RGB.eql override returned unexpected: $(echo "$eql_patched" | grep 'value:' | head -1) — skipping"
+      echo "error: assoc RGB.eql override returned unexpected" >&2
+      echo "$eql_patched" >&2
+      exit 1
     fi
 
     dissoc_eql="$(zig_hot dissoc RGB.eql 2>&1)"
@@ -1889,13 +1920,18 @@ if echo "$eql_baseline" | grep -qF "value: true"; then
     if echo "$eql_restored" | grep -qF "value: true"; then
       echo "dissoc RGB.eql restores original: OK"
     else
-      echo "dissoc RGB.eql unexpected: $(echo "$eql_restored" | grep 'value:' | head -1) — skipping"
+      echo "error: dissoc RGB.eql unexpected" >&2
+      echo "$eql_restored" >&2
+      exit 1
     fi
   else
-    echo "assoc RGB.eql not yet supported — skipping dissoc"
+    echo "error: assoc RGB.eql not yet supported" >&2
+    exit 1
   fi
 else
-  echo "eval-zig RGB.eql struct-literal args not yet supported — skipping assoc/dissoc"
+  echo "error: eval-zig RGB.eql struct-literal args not yet supported" >&2
+  echo "$eql_baseline" >&2
+  exit 1
 fi
 
 # RGB.perceivedLuminance — float math via eval-zig
@@ -1908,7 +1944,9 @@ if echo "$plum_eval_black" | grep -qF "value: 0"; then
   if echo "$plum_eval_white" | grep -qE "value: (1|0\.999)"; then
     echo "eval-zig RGB.perceivedLuminance(white) ≈ 1.0 ✓"
   else
-    echo "eval-zig RGB.perceivedLuminance(white) unexpected: $plum_eval_white — skipping assoc"
+    echo "error: eval-zig RGB.perceivedLuminance(white) unexpected" >&2
+    echo "$plum_eval_white" >&2
+    exit 1
   fi
 
   # assoc override: make perceivedLuminance always return 0.5
@@ -1918,7 +1956,9 @@ if echo "$plum_eval_black" | grep -qF "value: 0"; then
     if echo "$plum_patched" | grep -qE "value: (0\.5|5)"; then
       echo "assoc RGB.perceivedLuminance override (always 0.5): OK"
     else
-      echo "assoc RGB.perceivedLuminance override returned unexpected: $(echo "$plum_patched" | grep 'value:' | head -1) — skipping"
+      echo "error: assoc RGB.perceivedLuminance override returned unexpected" >&2
+      echo "$plum_patched" >&2
+      exit 1
     fi
 
     dissoc_plum="$(zig_hot dissoc RGB.perceivedLuminance 2>&1)"
@@ -1927,14 +1967,18 @@ if echo "$plum_eval_black" | grep -qF "value: 0"; then
       if echo "$plum_restored" | grep -qE "value: (1|0\.999)"; then
         echo "dissoc RGB.perceivedLuminance restores original: OK"
       else
-        echo "dissoc RGB.perceivedLuminance unexpected: $(echo "$plum_restored" | grep 'value:' | head -1) — skipping"
+        echo "error: dissoc RGB.perceivedLuminance unexpected" >&2
+        echo "$plum_restored" >&2
+        exit 1
       fi
     fi
   else
-    echo "assoc RGB.perceivedLuminance not yet supported — skipping"
+    echo "error: assoc RGB.perceivedLuminance not yet supported" >&2
+    exit 1
   fi
 else
-  echo "eval-zig RGB.perceivedLuminance struct-literal not yet supported — skipping"
+  echo "error: eval-zig RGB.perceivedLuminance struct-literal not yet supported" >&2
+    exit 1
 fi
 
 # RGB.contrast — transitive chain: contrast → luminance → componentLuminance
@@ -1993,10 +2037,12 @@ if echo "$pad_add_eval" | grep -qF "value:"; then
     dissoc_pad_add="$(zig_hot dissoc Padding.add 2>&1)"
     echo "dissoc Padding.add: OK"
   else
-    echo "assoc Padding.add not yet supported — skipping"
+    echo "error: assoc Padding.add not yet supported" >&2
+    exit 1
   fi
 else
-  echo "eval-zig Padding.add not yet supported — skipping"
+  echo "error: eval-zig Padding.add not yet supported" >&2
+    exit 1
 fi
 
 # Padding.eql — struct field equality
@@ -2016,16 +2062,20 @@ if echo "$pad_eql_eval" | grep -qF "value: true"; then
     if echo "$pad_eql_patched" | grep -qF "value: true"; then
       echo "assoc Padding.eql override (always true): OK"
     else
-      echo "assoc Padding.eql override returned unexpected: $(echo "$pad_eql_patched" | grep 'value:' | head -1) — skipping"
+      echo "error: assoc Padding.eql override returned unexpected" >&2
+      echo "$pad_eql_patched" >&2
+      exit 1
     fi
 
     dissoc_pad_eql="$(zig_hot dissoc Padding.eql 2>&1)"
     echo "dissoc Padding.eql: OK"
   else
-    echo "assoc Padding.eql not yet supported — skipping"
+    echo "error: assoc Padding.eql not yet supported" >&2
+    exit 1
   fi
 else
-  echo "eval-zig Padding.eql not yet supported — skipping"
+  echo "error: eval-zig Padding.eql not yet supported" >&2
+    exit 1
 fi
 
 # Mods.binding — packed struct field extraction
@@ -2041,10 +2091,12 @@ if echo "$mods_binding_eval" | grep -qF "value:"; then
     dissoc_mods="$(zig_hot dissoc Mods.binding 2>&1)"
     echo "dissoc Mods.binding: OK"
   else
-    echo "assoc Mods.binding not yet supported — skipping"
+    echo "error: assoc Mods.binding not yet supported" >&2
+    exit 1
   fi
 else
-  echo "eval-zig Mods.binding not yet supported — skipping"
+  echo "error: eval-zig Mods.binding not yet supported" >&2
+    exit 1
 fi
 
 # Key.modifier — switch on enum values
@@ -2064,16 +2116,20 @@ if echo "$key_mod_eval" | grep -qF "value: true"; then
     if echo "$key_mod_patched" | grep -qF "value: true"; then
       echo "assoc Key.modifier override (always true): OK"
     else
-      echo "assoc Key.modifier override returned unexpected: $(echo "$key_mod_patched" | grep 'value:' | head -1) — skipping"
+      echo "error: assoc Key.modifier override returned unexpected" >&2
+      echo "$key_mod_patched" >&2
+      exit 1
     fi
 
     dissoc_key_mod="$(zig_hot dissoc Key.modifier 2>&1)"
     echo "dissoc Key.modifier: OK"
   else
-    echo "assoc Key.modifier not yet supported — skipping"
+    echo "error: assoc Key.modifier not yet supported" >&2
+    exit 1
   fi
 else
-  echo "eval-zig Key.modifier not yet supported — skipping"
+  echo "error: eval-zig Key.modifier not yet supported" >&2
+    exit 1
 fi
 
 # GridSize.init — size-to-grid conversion through float division + clamp
@@ -2130,10 +2186,12 @@ if echo "$screen_sub_eval" | grep -qF "value: 90"; then
     expect_contains "$screen_sub_restored" "value: 90"
     echo "dissoc ScreenSize.subPadding: OK"
   else
-    echo "assoc ScreenSize.subPadding not yet supported — skipping"
+    echo "error: assoc ScreenSize.subPadding not yet supported" >&2
+    exit 1
   fi
 else
-  echo "eval-zig ScreenSize.subPadding not yet supported — skipping"
+  echo "error: eval-zig ScreenSize.subPadding not yet supported" >&2
+    exit 1
 fi
 
 # Padding.balanced — float math + floor + int conversion
@@ -2158,10 +2216,12 @@ if echo "$pad_balanced_eval" | grep -qF "value: 15"; then
     expect_contains "$pad_balanced_restored" "value: 15"
     echo "dissoc Padding.balanced: OK"
   else
-    echo "assoc Padding.balanced not yet supported — skipping"
+    echo "error: assoc Padding.balanced not yet supported" >&2
+    exit 1
   fi
 else
-  echo "eval-zig Padding.balanced not yet supported — skipping"
+  echo "error: eval-zig Padding.balanced not yet supported" >&2
+    exit 1
 fi
 
 # ScreenSize.blankPadding — multi-struct arithmetic after padding subtraction
@@ -2186,10 +2246,12 @@ if echo "$blank_padding_eval" | grep -qF "value: 46"; then
     expect_contains "$blank_padding_restored" "value: 46"
     echo "dissoc ScreenSize.blankPadding: OK"
   else
-    echo "assoc ScreenSize.blankPadding not yet supported — skipping"
+    echo "error: assoc ScreenSize.blankPadding not yet supported" >&2
+    exit 1
   fi
 else
-  echo "eval-zig ScreenSize.blankPadding not yet supported — skipping"
+  echo "error: eval-zig ScreenSize.blankPadding not yet supported" >&2
+    exit 1
 fi
 
 # Mods.unset — packed-struct bitwise AND-NOT
@@ -2210,10 +2272,12 @@ if echo "$mods_unset_eval" | grep -qF "value: true"; then
     ghostty_proven_functions+=(Mods.unset)
     echo "dissoc Mods.unset: OK"
   else
-    echo "assoc Mods.unset not yet supported — skipping"
+    echo "error: assoc Mods.unset not yet supported" >&2
+    exit 1
   fi
 else
-  echo "eval-zig Mods.unset not yet supported — skipping"
+  echo "error: eval-zig Mods.unset not yet supported" >&2
+    exit 1
 fi
 
 # Mods.withoutLocks — packed-struct mutation with lock-bit clearing
@@ -2234,10 +2298,12 @@ if echo "$mods_without_locks_eval" | grep -qF "value: true"; then
     ghostty_proven_functions+=(Mods.withoutLocks)
     echo "dissoc Mods.withoutLocks: OK"
   else
-    echo "assoc Mods.withoutLocks not yet supported — skipping"
+    echo "error: assoc Mods.withoutLocks not yet supported" >&2
+    exit 1
   fi
 else
-  echo "eval-zig Mods.withoutLocks not yet supported — skipping"
+  echo "error: eval-zig Mods.withoutLocks not yet supported" >&2
+    exit 1
 fi
 
 # modeFromInt — inline-for tag match + packed bitcast + enumFromInt
@@ -2263,10 +2329,12 @@ if echo "$mode_from_int_eval" | grep -qF "value: true"; then
     ghostty_proven_functions+=(modeFromInt)
     echo "dissoc modeFromInt: OK"
   else
-    echo "assoc modeFromInt not yet supported — skipping"
+    echo "error: assoc modeFromInt not yet supported" >&2
+    exit 1
   fi
 else
-  echo "eval-zig modeFromInt not yet supported — skipping"
+  echo "error: eval-zig modeFromInt not yet supported" >&2
+    exit 1
 fi
 
 # reqFromInt — request-tag match + packed bitcast + enumFromInt
@@ -2292,10 +2360,12 @@ if echo "$req_from_int_eval" | grep -qF "value: true"; then
     ghostty_proven_functions+=(reqFromInt)
     echo "dissoc reqFromInt: OK"
   else
-    echo "assoc reqFromInt not yet supported — skipping"
+    echo "error: assoc reqFromInt not yet supported" >&2
+    exit 1
   fi
 else
-  echo "eval-zig reqFromInt not yet supported — skipping"
+  echo "error: eval-zig reqFromInt not yet supported" >&2
+    exit 1
 fi
 
 # isSafeUtf8 — UTF-8 iteration plus control-code filtering
