@@ -137,7 +137,7 @@ extension Ghostty.MenuShortcutManager {
         init?(_ menuItem: NSMenuItem) {
             self.init(
                 keyEquivalent: menuItem.keyEquivalent,
-                modifiers: menuItem.keyEquivalentModifierMask,
+                modifiers: menuItem.keyEquivalentModifierMask
             )
         }
 

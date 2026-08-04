@@ -68,9 +68,14 @@ class DockTilePlugin: NSObject, NSDockTilePlugIn {
 
 private extension NSDockTile {
     func setIcon(_ newIcon: NSImage?) {
+        // Xcode 16's Swift 6 checker cannot infer that this AppKit value is
+        // only consumed after hopping to the main queue. Keep that ownership
+        // boundary explicit without changing the queue or rendering behavior.
+        let image = SendableImage(value: newIcon)
+
         // Update the Dock tile on the main thread.
         DispatchQueue.main.async {
-            guard let newIcon else {
+            guard let newIcon = image.value else {
                 self.contentView = nil
                 self.display()
                 return
@@ -82,6 +87,10 @@ private extension NSDockTile {
             self.display()
         }
     }
+}
+
+private struct SendableImage: @unchecked Sendable {
+    let value: NSImage?
 }
 
 // This is required because of the DispatchQueue call above. This doesn't

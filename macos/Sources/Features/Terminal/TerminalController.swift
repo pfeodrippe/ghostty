@@ -1133,12 +1133,12 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // style) don't change the frame after the position is restored.
         let originChanged = terminalWindow.setInitialWindowPosition(
             x: derivedConfig.windowPositionX,
-            y: derivedConfig.windowPositionY,
+            y: derivedConfig.windowPositionY
         )
         let restored = LastWindowPosition.shared.restore(
             terminalWindow,
             origin: !originChanged,
-            size: defaultSize == nil,
+            size: defaultSize == nil
         )
 
         // If nothing is changed for the frame,
@@ -1374,7 +1374,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // attached to the window that needs confirmation.
         confirmController.confirmClose(
             messageText: "Close Window?",
-            informativeText: "All terminal sessions in this window will be terminated.",
+            informativeText: "All terminal sessions in this window will be terminated."
         ) {
             self.closeWindowImmediately()
         }

@@ -1317,7 +1317,7 @@ extension AppDelegate {
                 let response = await controllersNeedConfirmation[0].confirmCloseAsync(
                     messageText: "Quit Ghostty?",
                     informativeText: "The terminal still has a running process. If you quit, the process will be killed.",
-                    confirmButtonTitle: "Terminate",
+                    confirmButtonTitle: "Terminate"
                 )
 
                 if [.OK, .alertFirstButtonReturn].contains(response) {
@@ -1355,7 +1355,7 @@ extension AppDelegate {
                 let response = await controller.confirmCloseAsync(
                     messageText: "Quit Ghostty?",
                     informativeText: "The terminal still has a running process. If you quit, the process will be killed.",
-                    confirmButtonTitle: "Terminate",
+                    confirmButtonTitle: "Terminate"
                 )
 
                 if [.OK, .alertFirstButtonReturn].contains(response) {

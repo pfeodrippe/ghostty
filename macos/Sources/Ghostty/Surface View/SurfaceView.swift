@@ -376,88 +376,7 @@ extension Ghostty {
 
         var body: some View {
             GeometryReader { geo in
-                HStack(spacing: 4) {
-                    BackportSelectionTextField(
-                        "Search",
-                        text: $searchState.needle,
-                        selection: $searchState.needleSelection
-                    )
-                    .textFieldStyle(.plain)
-                    .frame(width: 180)
-                    .padding(.leading, 8)
-                    .padding(.trailing, 50)
-                    .padding(.vertical, 6)
-                    .background(Color.primary.opacity(0.1))
-                    .cornerRadius(6)
-                    .focused($isSearchFieldFocused)
-                    .overlay(alignment: .trailing) {
-                        if let selected = searchState.selected {
-                            Text("\(selected + 1)/\(searchState.total, default: "?")")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
-                                .padding(.trailing, 8)
-                        } else if let total = searchState.total {
-                            Text("-/\(total)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
-                                .padding(.trailing, 8)
-                        }
-                    }
-                    .onChange(of: searchState.needle) { _ in
-                        searchState.writePasteboardNeedle()
-                    }
-                    .onReceive(
-                        NotificationCenter.default.publisher(
-                            for: OSApplication.didBecomeActiveNotification
-                        )
-                    ) { _ in
-                        // When the app becomes active, we want to check for external changes
-                        // to our synced needle.
-                        searchState.readPasteboardNeedle()
-                    }
-                    .onSubmit {
-                        _ = surfaceView.navigateSearchToNext()
-                    }
-#if canImport(AppKit)
-                    .onExitCommand {
-                        if searchState.needle.isEmpty {
-                            onClose()
-                        } else {
-                            Ghostty.moveFocus(to: surfaceView)
-                        }
-                    }
-#endif
-                    .backport.onKeyPress(.return) { modifiers in
-                        if modifiers.contains(.shift) {
-                            _ = surfaceView.navigateSearchToPrevious()
-                            return .handled
-                        }
-                        return .ignored
-                    }
-
-                    Button(action: {
-                        _ = surfaceView.navigateSearchToNext()
-                    }, label: {
-                        Image(systemName: "chevron.up")
-                    })
-                    .buttonStyle(SearchButtonStyle())
-
-                    Button(action: {
-                        guard let surface = surfaceView.surface else { return }
-                        let action = "navigate_search:previous"
-                        ghostty_surface_binding_action(surface, action, UInt(action.lengthOfBytes(using: .utf8)))
-                    }, label: {
-                        Image(systemName: "chevron.down")
-                    })
-                    .buttonStyle(SearchButtonStyle())
-
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                    }
-                    .buttonStyle(SearchButtonStyle())
-                }
+                searchControls
                 .padding(8)
                 .background(.background)
                 .clipShape(clipShape)
@@ -502,6 +421,97 @@ extension Ghostty {
             }
         }
 
+        private var searchControls: some View {
+            HStack(spacing: 4) {
+                BackportSelectionTextField(
+                    "Search",
+                    text: $searchState.needle,
+                    selection: $searchState.needleSelection
+                )
+                .textFieldStyle(.plain)
+                .frame(width: 180)
+                .padding(.leading, 8)
+                .padding(.trailing, 50)
+                .padding(.vertical, 6)
+                .background(Color.primary.opacity(0.1))
+                .cornerRadius(6)
+                .focused($isSearchFieldFocused)
+                .overlay(alignment: .trailing) {
+                    if let selected = searchState.selected {
+                        let total = searchState.total.map(String.init) ?? "?"
+                        Text("\(selected + 1)/\(total)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                            .padding(.trailing, 8)
+                    } else if let total = searchState.total {
+                        Text("-/\(total)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                            .padding(.trailing, 8)
+                    }
+                }
+                .onChange(of: searchState.needle) { _ in
+                    searchState.writePasteboardNeedle()
+                }
+                .onReceive(
+                    NotificationCenter.default.publisher(
+                        for: OSApplication.didBecomeActiveNotification
+                    )
+                ) { _ in
+                    // When the app becomes active, check for external changes
+                    // to the synchronized needle.
+                    searchState.readPasteboardNeedle()
+                }
+                .onSubmit {
+                    _ = surfaceView.navigateSearchToNext()
+                }
+#if canImport(AppKit)
+                .onExitCommand {
+                    if searchState.needle.isEmpty {
+                        onClose()
+                    } else {
+                        Ghostty.moveFocus(to: surfaceView)
+                    }
+                }
+#endif
+                .backport.onKeyPress(.return) { modifiers in
+                    if modifiers.contains(.shift) {
+                        _ = surfaceView.navigateSearchToPrevious()
+                        return .handled
+                    }
+                    return .ignored
+                }
+
+                Button(action: {
+                    _ = surfaceView.navigateSearchToNext()
+                }, label: {
+                    Image(systemName: "chevron.up")
+                })
+                .buttonStyle(SearchButtonStyle())
+
+                Button(action: {
+                    guard let surface = surfaceView.surface else { return }
+                    let action = "navigate_search:previous"
+                    ghostty_surface_binding_action(
+                        surface,
+                        action,
+                        UInt(action.lengthOfBytes(using: .utf8))
+                    )
+                }, label: {
+                    Image(systemName: "chevron.down")
+                })
+                .buttonStyle(SearchButtonStyle())
+
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(SearchButtonStyle())
+            }
+        }
+
+        #if compiler(>=6.2)
         private var clipShape: some Shape {
             if #available(iOS 26.0, macOS 26.0, *) {
                 return ConcentricRectangle(corners: .concentric(minimum: 8), isUniform: true)
@@ -509,6 +519,11 @@ extension Ghostty {
                 return RoundedRectangle(cornerRadius: 8)
             }
         }
+        #else
+        private var clipShape: some Shape {
+            RoundedRectangle(cornerRadius: 8)
+        }
+        #endif
 
         enum Corner {
             case topLeft, topRight, bottomLeft, bottomRight
