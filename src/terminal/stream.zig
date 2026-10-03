@@ -110,7 +110,7 @@ pub const Action = union(Key) {
     dcs_put: u8,
     dcs_unhook,
     apc_start,
-    apc_end,
+    apc_end: ApcEnd,
     apc_put: u8,
     apc_put_slice: ApcPutSlice,
     end_hyperlink,
@@ -128,6 +128,11 @@ pub const Action = union(Key) {
     kitty_color_report: kitty.color.OSC,
     color_operation: ColorOperation,
     semantic_prompt: SemanticPrompt,
+    kitty_clipboard: KittyClipboard,
+    kitty_dnd: KittyDnd,
+    resize_window: ResizeWindow,
+    osc_unknown: osc.Command.Unknown,
+    mouse_shape_reset,
 
     pub const Key = lib.Enum(
         lib.target,
@@ -227,6 +232,11 @@ pub const Action = union(Key) {
             "kitty_color_report",
             "color_operation",
             "semantic_prompt",
+            "kitty_clipboard",
+            "kitty_dnd",
+            "resize_window",
+            "osc_unknown",
+            "mouse_shape_reset",
         },
     );
 
@@ -236,7 +246,7 @@ pub const Action = union(Key) {
         @This(),
         // TODO: Before shipping an ABI-compatible libghostty, verify this.
         // This was just arbitrarily chosen for now.
-        [16]u64,
+        .{ .padding = [16]u64 },
     );
     pub const Tag = c_union.Tag;
     pub const Value = c_union.Value;
@@ -291,6 +301,11 @@ pub const Action = union(Key) {
         }
     };
 
+    pub const ApcEnd = extern struct {
+        /// False when CAN, SUB, or another aborting transition ended the APC.
+        terminated: bool,
+    };
+
     pub const InvokeCharset = lib.Struct(lib.target, struct {
         bank: charsets.ActiveSlot,
         charset: charsets.Slots,
@@ -338,6 +353,15 @@ pub const Action = union(Key) {
     pub const Margin = extern struct {
         top_left: u16,
         bottom_right: u16,
+    };
+
+    /// A request to resize the window's text area (CSI 8 t). A value
+    /// of zero means the parameter was omitted or zero, and the current
+    /// size for that dimension should be kept. xterm treats an explicit
+    /// zero as the screen size, but we can't distinguish it from omitted.
+    pub const ResizeWindow = extern struct {
+        rows: u16,
+        columns: u16,
     };
 
     pub const KittyKeyboardFlags = struct {
@@ -407,6 +431,7 @@ pub const Action = union(Key) {
     pub const ClipboardContents = struct {
         kind: u8,
         data: []const u8,
+        terminator: osc.Terminator,
 
         pub const C = extern struct {
             kind: u8,
@@ -439,6 +464,10 @@ pub const Action = union(Key) {
     };
 
     pub const SemanticPrompt = osc.Command.SemanticPrompt;
+
+    pub const KittyClipboard = osc.Command.KittyClipboardProtocol;
+
+    pub const KittyDnd = osc.Command.KittyDndProtocol;
 };
 
 /// Returns a type that can process a stream of tty control characters.
@@ -497,6 +526,17 @@ pub fn Stream(comptime H: type) type {
             /// unfinished state without repeating committed terminal effects.
             /// Continuation tracking is only supported by TerminalStream.
             continuation_max_bytes: ?usize = null,
+
+            /// The most bytes to keep from each OSC sequence whose number
+            /// the OSC parser does not implement. Zero, the default,
+            /// discards these sequences. Any other value sends them to the
+            /// handler as `osc_unknown` actions. See
+            /// `osc.Parser.unknown_max_bytes` for how the limit behaves.
+            ///
+            /// This only affects OSC. Other kinds of unknown sequences,
+            /// such as APC, are collected by the handler and have their own
+            /// limits there.
+            osc_unknown_max_bytes: usize = 0,
         };
 
         /// Initialize a stream. Without an allocator, operations that require
@@ -512,6 +552,7 @@ pub fn Stream(comptime H: type) type {
             // Initialize the parser
             var parser: Parser = .init();
             if (options.allocator) |alloc| parser.osc_parser.alloc = alloc;
+            parser.osc_parser.unknown_max_bytes = options.osc_unknown_max_bytes;
 
             // Initialize the continuation tracker if one is requested.
             var tracker: ?continuationpkg.Tracker = null;
@@ -590,10 +631,63 @@ pub fn Stream(comptime H: type) type {
             if (self.continuation != null) self.trackContinuation(input);
         }
 
+        /// Process a string of characters, but only the shortest prefix
+        /// needed to reach the ground state.
+        ///
+        /// The ground state is when the stream isn't in the middle of any
+        /// type of sequence: UTF-8, ESC, CSI, OSC, etc. It is the stateless
+        /// point of the stream.
+        ///
+        /// If the stream is already at ground then this consumes nothing
+        /// and returns zero. A non-null return is the number of bytes consumed
+        /// before reaching ground, including the byte that reaches it. A null
+        /// return means the full slice was consumed without reaching ground.
+        ///
+        /// This is anywhere from 1% to 5% slower than nextSlice, depending
+        /// on the types of inputs provided (e.g. OSC vs APC, whether it
+        /// ever reaches ground, etc.).
+        pub inline fn nextSliceUntilGround(
+            self: *Self,
+            input: []const u8,
+        ) ?usize {
+            const consumed = self.nextSliceUntilGroundUntracked(input);
+            const consumed_len = consumed orelse input.len;
+            if (self.continuation != null and consumed_len > 0) {
+                self.trackContinuation(input[0..consumed_len]);
+            }
+
+            return consumed;
+        }
+
+        inline fn nextSliceUntilGroundUntracked(
+            self: *Self,
+            input: []const u8,
+        ) ?usize {
+            if (self.ground()) return 0;
+
+            // Process UTF-8 if we're within that state.
+            var offset: usize = 0;
+            while (self.utf8decoder.state != 0) {
+                if (offset >= input.len) return null;
+                self.nextUtf8(input[offset]);
+                offset += 1;
+            }
+
+            // Process non-UTF-8
+            if (self.parser.state != .ground) {
+                offset += self.consumeUntilGround(input[offset..]);
+            }
+
+            return if (self.ground()) offset else null;
+        }
+
         inline fn nextSliceUntracked(self: *Self, input: []const u8) void {
-            // Disable SIMD optimizations if build requests it or if our
-            // manual debug mode is on.
-            if (comptime debug or !build_options.simd) {
+            // Byte-at-a-time parsing in debug mode only. Even without
+            // SIMD support (build_options.simd == false, e.g. wasm), the
+            // batched path below is much faster than per-byte dispatch
+            // because it decodes UTF-8 in bulk (via scalar fallbacks) and
+            // hands printable runs to the handler as print_slice actions.
+            if (comptime debug) {
                 for (input) |c| self.nextUntracked(c);
                 return;
             }
@@ -651,9 +745,25 @@ pub fn Stream(comptime H: type) type {
                 var i: usize = 0;
                 while (i < cps.len) {
                     const cp = cps[i];
-                    if (cp <= 0xF) {
+                    // C0 and UTF-8-decoded C1 controls never enter
+                    // printable runs. A codepoint is one of those
+                    // exactly when it has no bit set outside 0x9F:
+                    // bits 0-4 and bit 7 cover 0x00-0x1F and
+                    // 0x80-0x9F and nothing else, so a single
+                    // AND-test classifies both ranges.
+                    if ((cp & ~@as(u32, 0x9F)) == 0) {
                         @branchHint(.unlikely);
-                        self.execute(@intCast(cp));
+                        if (cp <= 0x1F) {
+                            // C0 controls execute rather than print.
+                            self.execute(@intCast(cp));
+                        } else {
+                            // C1 controls decoded from UTF-8 are ignored.
+                            logUnsupportedOnce(
+                                "ignoring UTF-8-decoded C1 controls, first: 0x{x}",
+                                .{cp},
+                                0x80,
+                            );
+                        }
                         i += 1;
                         continue;
                     }
@@ -668,19 +778,23 @@ pub fn Stream(comptime H: type) type {
                     scan: {
                         if (simd.lanes(u32)) |lanes| {
                             const V = @Vector(lanes, u32);
-                            const threshold: V = @splat(0xF);
+                            // Non-printable (C0 or decoded C1) is
+                            // equivalent to "no bit outside 0x9F is
+                            // set": one AND-test per lane.
+                            const mask: V = @splat(~@as(u32, 0x9F));
+                            const zero: V = @splat(0);
                             while (end + lanes <= cps.len) {
                                 const v: V = cps[end..][0..lanes].*;
-                                const gt = v > threshold;
-                                if (!@reduce(.And, gt)) {
-                                    const bits: std.meta.Int(.unsigned, lanes) = @bitCast(gt);
-                                    end += @ctz(~bits);
+                                const stop = (v & mask) == zero;
+                                if (@reduce(.Or, stop)) {
+                                    const bits: std.meta.Int(.unsigned, lanes) = @bitCast(stop);
+                                    end += @ctz(bits);
                                     break :scan;
                                 }
                                 end += lanes;
                             }
                         }
-                        while (end < cps.len and cps[end] > 0xF) end += 1;
+                        while (end < cps.len and (cps[end] & ~@as(u32, 0x9F)) != 0) end += 1;
                     }
                     self.handler.vt(.print_slice, .{ .cps = cps[i..end] });
                     i = end;
@@ -766,8 +880,70 @@ pub fn Stream(comptime H: type) type {
                     if (self.parser.state == .sos_pm_apc_string) {
                         offset += self.consumeApcString(input[offset..]);
                         if (offset >= input.len) return input.len;
-                        // The next byte exits the string state; let
-                        // nextNonUtf8 below handle it.
+
+                        // Fast-path normal string termination. This matches
+                        // Parser.next's exit and entry actions while avoiding
+                        // the generic action loop for every completed APC.
+                        switch (input[offset]) {
+                            std.ascii.control_code.esc => {
+                                self.parser.clear();
+                                self.parser.state = .escape;
+                                self.handler.vt(.apc_end, .{ .terminated = true });
+                                offset += 1;
+                                continue;
+                            },
+                            0x9C => {
+                                self.parser.state = .ground;
+                                self.handler.vt(.apc_end, .{ .terminated = true });
+                                offset += 1;
+                                continue;
+                            },
+                            else => {},
+                        }
+
+                        // Aborting transitions need the scalar path so the
+                        // handler can distinguish them from terminators.
+                    }
+
+                    // Bulk-consume OSC string bytes into the OSC parser.
+                    // OSC payloads (e.g. OSC 52 clipboard operations and
+                    // the kitty clipboard protocol) can be megabytes of
+                    // base64 data, so per-byte dispatch is far too slow.
+                    // This can't be used for handlers with a vtRaw hook
+                    // because the bytes never produce osc_put actions.
+                    if (self.parser.state == .osc_string) {
+                        offset += self.consumeOscString(input[offset..]);
+                        if (offset >= input.len) return input.len;
+
+                        // Fast-path normal string termination. This matches
+                        // Parser.next's exit and entry actions while avoiding
+                        // the generic action loop for every completed OSC.
+                        switch (input[offset]) {
+                            // The sequence should be terminated by a full
+                            // ST ("ESC \"); the "\" that should follow is
+                            // dispatched as a normal escape sequence.
+                            std.ascii.control_code.esc => {
+                                if (self.parser.osc_parser.end(
+                                    std.ascii.control_code.esc,
+                                )) |cmd| self.oscDispatch(cmd.*);
+                                self.parser.clear();
+                                self.parser.state = .escape;
+                                offset += 1;
+                                continue;
+                            },
+                            // BEL terminates the string directly.
+                            std.ascii.control_code.bel => {
+                                if (self.parser.osc_parser.end(
+                                    std.ascii.control_code.bel,
+                                )) |cmd| self.oscDispatch(cmd.*);
+                                self.parser.state = .ground;
+                                offset += 1;
+                                continue;
+                            },
+                            // CAN/SUB abort and ignored C0 bytes go
+                            // through the state machine below.
+                            else => {},
+                        }
                     }
                 }
 
@@ -923,6 +1099,43 @@ pub fn Stream(comptime H: type) type {
             return end;
         }
 
+        /// Bulk-consume OSC string bytes into the OSC parser. Returns
+        /// the number of bytes consumed. Stops at the first byte that
+        /// is not an osc_put byte in the parse table, leaving it for
+        /// the caller to process through the state machine. Every byte
+        /// >= 0x20 is an osc_put byte; bytes below either terminate or
+        /// abort the string (BEL, CAN, SUB, ESC) or are ignored.
+        ///
+        /// Must not be used by handlers with a vtRaw hook because the
+        /// consumed bytes never produce osc_put actions.
+        fn consumeOscString(self: *Self, input: []const u8) usize {
+            comptime assert(!@hasDecl(T, "vtRaw"));
+            assert(self.parser.state == .osc_string);
+
+            var end: usize = 0;
+            if (comptime std.simd.suggestVectorLength(u8)) |vector_len| {
+                const ByteVector = @Vector(vector_len, u8);
+                while (end + vector_len <= input.len) {
+                    const bytes: ByteVector = input[end..][0..vector_len].*;
+                    const stop = bytes < @as(ByteVector, @splat(0x20));
+                    if (@reduce(.Or, stop)) break;
+                    end += vector_len;
+                }
+            }
+            while (end < input.len) {
+                switch (input[end]) {
+                    // Not osc_put bytes: BEL/CAN/SUB/ESC terminate or
+                    // abort the state; other C0 bytes are ignored by it.
+                    0x00...0x1F => break,
+                    // Everything else is an osc_put byte.
+                    else => end += 1,
+                }
+            }
+
+            if (end > 0) self.parser.osc_parser.nextSlice(input[0..end]);
+            return end;
+        }
+
         /// Like nextSlice but takes one byte and is necessarily a scalar
         /// operation that can't use SIMD. Prefer nextSlice if you can and
         /// try to get multiple bytes at once.
@@ -979,16 +1192,32 @@ pub fn Stream(comptime H: type) type {
             // a chain of inline functions.
             @setEvalBranchQuota(200_000);
 
-            // C0 control
-            if (c <= 0xF) {
+            // C0 control or a C1 control decoded from UTF-8: exactly
+            // the codepoints with no bit set outside 0x9F (bits 0-4
+            // and bit 7 cover 0x00-0x1F and 0x80-0x9F and nothing
+            // else), so the printable fast path stays a single
+            // AND-test.
+            if ((c & ~@as(u21, 0x9F)) == 0) {
                 @branchHint(.unlikely);
+
+                // ESC
+                if (c == 0x1B) {
+                    self.parser.state = .escape;
+                    self.parser.clear();
+                    return;
+                }
+
+                // Ignore C1 that came via UTF-8 decoding, matching xterm.
+                if (c > 0x1F) {
+                    logUnsupportedOnce(
+                        "ignoring UTF-8-decoded C1 controls, first: 0x{x}",
+                        .{c},
+                        0x80,
+                    );
+                    return;
+                }
+
                 self.execute(@intCast(c));
-                return;
-            }
-            // ESC
-            if (c == 0x1B) {
-                self.parser.state = .escape;
-                self.parser.clear();
                 return;
             }
             self.print(@intCast(c));
@@ -1109,7 +1338,9 @@ pub fn Stream(comptime H: type) type {
                     .dcs_unhook => self.handler.vt(.dcs_unhook, {}),
                     .apc_start => self.handler.vt(.apc_start, {}),
                     .apc_put => |code| self.handler.vt(.apc_put, code),
-                    .apc_end => self.handler.vt(.apc_end, {}),
+                    .apc_end => self.handler.vt(.apc_end, .{
+                        .terminated = c == std.ascii.control_code.esc or c == 0x9C,
+                    }),
                 }
             }
         }
@@ -1963,7 +2194,7 @@ pub fn Stream(comptime H: type) type {
 
                 // DECRQM - Request Mode
                 'p' => switch (input.intermediates.len) {
-                    2 => decrqm: {
+                    1, 2 => decrqm: {
                         const ansi_mode = ansi: {
                             switch (input.intermediates.len) {
                                 1 => if (input.intermediates[0] == '$') break :ansi true,
@@ -2177,6 +2408,16 @@ pub fn Stream(comptime H: type) type {
                     0 => {
                         if (input.params.len > 0) {
                             switch (input.params[0]) {
+                                8 => if (input.params.len <= 3) {
+                                    // resize the text area in characters
+                                    self.handler.vt(.resize_window, .{
+                                        .rows = if (input.params.len > 1) input.params[1] else 0,
+                                        .columns = if (input.params.len > 2) input.params[2] else 0,
+                                    });
+                                } else log.warn(
+                                    "ignoring CSI 8 t with extra parameters: {f}",
+                                    .{input},
+                                ),
                                 14 => if (input.params.len == 1) {
                                     // report the text area size in pixels
                                     self.handler.vt(.size_report, .csi_14_t);
@@ -2415,6 +2656,7 @@ pub fn Stream(comptime H: type) type {
                     self.handler.vt(.clipboard_contents, .{
                         .kind = clip.kind,
                         .data = clip.data,
+                        .terminator = clip.terminator,
                     });
                 },
 
@@ -2424,6 +2666,11 @@ pub fn Stream(comptime H: type) type {
                 },
 
                 .mouse_shape => |v| {
+                    if (v.value.len == 0) {
+                        self.handler.vt(.mouse_shape_reset, {});
+                        return;
+                    }
+
                     const shape = MouseShape.fromString(v.value) orelse {
                         @branchHint(.unlikely);
                         log.warn("unknown cursor shape: {s}", .{v.value});
@@ -2470,6 +2717,19 @@ pub fn Stream(comptime H: type) type {
                     self.handler.vt(.progress_report, v);
                 },
 
+                .kitty_clipboard_protocol => |v| {
+                    self.handler.vt(.kitty_clipboard, v);
+                },
+
+                .kitty_dnd_protocol => |v| {
+                    self.handler.vt(.kitty_dnd, v);
+                },
+
+                .unknown => |v| {
+                    @branchHint(.unlikely);
+                    self.handler.vt(.osc_unknown, v);
+                },
+
                 .conemu_sleep,
                 .conemu_show_message_box,
                 .conemu_change_tab_title,
@@ -2480,8 +2740,7 @@ pub fn Stream(comptime H: type) type {
                 .conemu_output_environment_variable,
                 .conemu_run_process,
                 .kitty_text_sizing,
-                .kitty_clipboard_protocol,
-                .kitty_dnd_protocol,
+                .kitty_desktop_notification,
                 .context_signal,
                 => {
                     log.debug("unimplemented OSC callback: {}", .{cmd});
@@ -2939,6 +3198,166 @@ test "simd: complete incomplete utf-8" {
     try testing.expectEqual(@as(u21, 0x800), s.handler.c.?);
 }
 
+test "stream: ground state C0 controls are executed, not printed" {
+    const H = struct {
+        buf: [128]u21 = undefined,
+        len: usize = 0,
+
+        pub fn vt(
+            self: *@This(),
+            comptime action: Action.Tag,
+            value: Action.Value(action),
+        ) void {
+            switch (action) {
+                .print => {
+                    self.buf[self.len] = value.cp;
+                    self.len += 1;
+                },
+                .print_slice => for (value.cps) |cp| {
+                    self.buf[self.len] = @intCast(cp);
+                    self.len += 1;
+                },
+                else => {},
+            }
+        }
+    };
+
+    // Every C0 control except ESC must never produce a print action
+    // in the ground state. ESC is excluded because it begins an
+    // escape sequence rather than executing.
+    for (0..0x20) |c| {
+        if (c == 0x1B) continue;
+
+        // Scalar path.
+        {
+            var s: Stream(H) = .init(.{ .handler = .{} });
+            s.next('A');
+            s.next(@intCast(c));
+            s.next('B');
+            try testing.expectEqual(@as(usize, 2), s.handler.len);
+            try testing.expectEqual(@as(u21, 'A'), s.handler.buf[0]);
+            try testing.expectEqual(@as(u21, 'B'), s.handler.buf[1]);
+        }
+
+        // Batched path.
+        {
+            var s: Stream(H) = .init(.{ .handler = .{} });
+            s.nextSlice(&.{ 'A', 'B', @intCast(c), 'C', 'D' });
+            try testing.expectEqual(@as(usize, 4), s.handler.len);
+            for ("ABCD", 0..) |expected, i| {
+                try testing.expectEqual(@as(u21, expected), s.handler.buf[i]);
+            }
+        }
+
+        // Batched path with a run long enough to exercise the
+        // vectorized printable-run scan on either side of the control.
+        {
+            var s: Stream(H) = .init(.{ .handler = .{} });
+            var input: [65]u8 = @splat('A');
+            input[32] = @intCast(c);
+            s.nextSlice(&input);
+            try testing.expectEqual(@as(usize, 64), s.handler.len);
+            for (s.handler.buf[0..s.handler.len]) |cp| {
+                try testing.expectEqual(@as(u21, 'A'), cp);
+            }
+        }
+    }
+}
+
+test "stream: ground state UTF-8-decoded C1 controls are ignored" {
+    const H = struct {
+        buf: [128]u21 = undefined,
+        len: usize = 0,
+
+        pub fn vt(
+            self: *@This(),
+            comptime action: Action.Tag,
+            value: Action.Value(action),
+        ) void {
+            switch (action) {
+                .print => {
+                    self.buf[self.len] = value.cp;
+                    self.len += 1;
+                },
+                .print_slice => for (value.cps) |cp| {
+                    self.buf[self.len] = @intCast(cp);
+                    self.len += 1;
+                },
+                else => {},
+            }
+        }
+    };
+
+    // Every C1 control that arrives as well-formed UTF-8 (a two byte
+    // 0xC2-lead sequence) must be dropped: not printed and not
+    // interpreted as a control (e.g. U+009B must not start a CSI).
+    for (0x80..0xA0) |c| {
+        const enc: [2]u8 = .{ 0xC2, @intCast(c) };
+
+        // Scalar path.
+        {
+            var s: Stream(H) = .init(.{ .handler = .{} });
+            s.next('A');
+            s.next(enc[0]);
+            s.next(enc[1]);
+            s.next('B');
+            try testing.expectEqual(@as(usize, 2), s.handler.len);
+            try testing.expectEqual(@as(u21, 'A'), s.handler.buf[0]);
+            try testing.expectEqual(@as(u21, 'B'), s.handler.buf[1]);
+        }
+
+        // Batched path.
+        {
+            var s: Stream(H) = .init(.{ .handler = .{} });
+            s.nextSlice(&.{ 'A', 'B', enc[0], enc[1], 'C', 'D' });
+            try testing.expectEqual(@as(usize, 4), s.handler.len);
+            for ("ABCD", 0..) |expected, i| {
+                try testing.expectEqual(@as(u21, expected), s.handler.buf[i]);
+            }
+        }
+
+        // Batched path with a run long enough to exercise the
+        // vectorized printable-run scan on either side of the control.
+        {
+            var s: Stream(H) = .init(.{ .handler = .{} });
+            var input: [66]u8 = @splat('A');
+            input[32] = enc[0];
+            input[33] = enc[1];
+            s.nextSlice(&input);
+            try testing.expectEqual(@as(usize, 64), s.handler.len);
+            for (s.handler.buf[0..s.handler.len]) |cp| {
+                try testing.expectEqual(@as(u21, 'A'), cp);
+            }
+        }
+    }
+
+    // U+00A0 (NBSP), just past the C1 range, must still print.
+    {
+        var s: Stream(H) = .init(.{ .handler = .{} });
+        s.nextSlice(&.{ 0xC2, 0xA0 });
+        try testing.expectEqual(@as(usize, 1), s.handler.len);
+        try testing.expectEqual(@as(u21, 0xA0), s.handler.buf[0]);
+    }
+
+    // A codepoint whose continuation byte falls in the C1 range must
+    // still print: "Ü" is 0xC3 0x9C.
+    {
+        var s: Stream(H) = .init(.{ .handler = .{} });
+        s.nextSlice("Ü");
+        try testing.expectEqual(@as(usize, 1), s.handler.len);
+        try testing.expectEqual(@as(u21, 0xDC), s.handler.buf[0]);
+    }
+
+    // A raw C1 byte is ill-formed UTF-8, not a decoded C1: it must
+    // still produce a U+FFFD replacement.
+    {
+        var s: Stream(H) = .init(.{ .handler = .{} });
+        s.nextSlice(&.{0x9B});
+        try testing.expectEqual(@as(usize, 1), s.handler.len);
+        try testing.expectEqual(@as(u21, 0xFFFD), s.handler.buf[0]);
+    }
+}
+
 test "stream: cursor right (CUF)" {
     const H = struct {
         amount: u16 = 0,
@@ -3027,6 +3446,61 @@ test "stream: ansi set mode (SM) and reset mode (RM)" {
     s.handler.mode = null;
     s.nextSlice("\x1B[>5h");
     try testing.expect(s.handler.mode == null);
+}
+
+test "stream: DECRQM dispatch" {
+    const H = struct {
+        calls: usize = 0,
+        mode: ?modes.Mode = null,
+        raw: ?Action.RawMode = null,
+
+        pub fn vt(self: *@This(), comptime action: Action.Tag, value: Action.Value(action)) void {
+            switch (action) {
+                .request_mode => {
+                    self.calls += 1;
+                    self.mode = value.mode;
+                },
+                .request_mode_unknown => {
+                    self.calls += 1;
+                    self.raw = value;
+                },
+                else => {},
+            }
+        }
+    };
+
+    const cases = [_]struct {
+        input: []const u8,
+        mode: ?modes.Mode = null,
+        raw: ?Action.RawMode = null,
+    }{
+        .{ .input = "\x1b[4$p", .mode = .insert },
+        .{ .input = "\x1b[?4$p", .mode = .slow_scroll },
+        .{ .input = "\x1b[9999$p", .raw = .{ .mode = 9999, .ansi = true } },
+        .{ .input = "\x1b[?9999$p", .raw = .{ .mode = 9999, .ansi = false } },
+        .{ .input = "\x1b[4p" },
+        .{ .input = "\x1b[?4p" },
+        .{ .input = "\x1b[4!p" },
+        .{ .input = "\x1b[4 p" },
+        .{ .input = "\x1b[>4$p" },
+        .{ .input = "\x1b[?4!p" },
+        .{ .input = "\x1b[$p" },
+        .{ .input = "\x1b[?$p" },
+        .{ .input = "\x1b[4;20$p" },
+        .{ .input = "\x1b[?4;7$p" },
+        .{ .input = "\x1b[4:20$p" },
+    };
+    for (cases) |case| {
+        for (0..case.input.len + 1) |split| {
+            var s: Stream(H) = .init(.{ .handler = .{} });
+            s.nextSlice(case.input[0..split]);
+            if (split < case.input.len) try testing.expectEqual(0, s.handler.calls);
+            s.nextSlice(case.input[split..]);
+            try testing.expectEqual(@as(usize, if (case.mode != null or case.raw != null) 1 else 0), s.handler.calls);
+            try testing.expectEqual(case.mode, s.handler.mode);
+            try testing.expectEqualDeep(case.raw, s.handler.raw);
+        }
+    }
 }
 
 test "stream: ansi set mode (SM) and reset mode (RM) with unknown value" {
@@ -3436,6 +3910,191 @@ test "stream: change window title with invalid utf-8" {
     }
 }
 
+test "stream: osc 52 large payload in chunks" {
+    const alloc = testing.allocator;
+
+    const H = struct {
+        const Self = @This();
+        data: std.ArrayListUnmanaged(u8) = .empty,
+        kind: u8 = 0,
+        terminator: ?osc.Terminator = null,
+        count: usize = 0,
+
+        pub fn vt(
+            self: *Self,
+            comptime action: Action.Tag,
+            value: Action.Value(action),
+        ) void {
+            switch (action) {
+                .clipboard_contents => {
+                    self.count += 1;
+                    self.kind = value.kind;
+                    self.terminator = value.terminator;
+                    self.data.appendSlice(
+                        testing.allocator,
+                        value.data,
+                    ) catch @panic("OOM");
+                },
+                else => {},
+            }
+        }
+    };
+
+    // A payload that far exceeds the fixed buffer so the allocating
+    // capture is used, fed in chunk sizes that don't align with the
+    // sequence so the bulk path sees every kind of boundary.
+    const prefix = "\x1b]52;c;";
+    const payload_len = 150_000;
+    var input: std.ArrayListUnmanaged(u8) = .empty;
+    defer input.deinit(alloc);
+    try input.appendSlice(alloc, prefix);
+    for (0..payload_len) |i| try input.append(
+        alloc,
+        'A' + @as(u8, @intCast(i % 26)),
+    );
+    try input.appendSlice(alloc, "\x1b\\");
+
+    var s: Stream(H) = .init(.{ .handler = .{}, .allocator = alloc });
+    defer s.parser.deinit();
+    defer s.handler.data.deinit(alloc);
+
+    var i: usize = 0;
+    while (i < input.items.len) {
+        const end = @min(i + 4093, input.items.len);
+        s.nextSlice(input.items[i..end]);
+        i = end;
+    }
+
+    try testing.expectEqual(@as(usize, 1), s.handler.count);
+    try testing.expectEqual(@as(u8, 'c'), s.handler.kind);
+    try testing.expectEqual(osc.Terminator.st, s.handler.terminator.?);
+    try testing.expectEqualSlices(
+        u8,
+        input.items[prefix.len .. prefix.len + payload_len],
+        s.handler.data.items,
+    );
+}
+
+test "stream: osc bulk path matches per-byte path" {
+    const alloc = testing.allocator;
+
+    // Records every dispatch relevant to OSC processing in a
+    // normalized text form so streams fed different ways can be
+    // compared byte-for-byte.
+    const H = struct {
+        const Self = @This();
+        alloc: Allocator,
+        journal: std.ArrayListUnmanaged(u8) = .empty,
+
+        fn record(self: *Self, comptime fmt: []const u8, args: anytype) void {
+            const s = std.fmt.allocPrint(
+                self.alloc,
+                fmt,
+                args,
+            ) catch @panic("OOM");
+            defer self.alloc.free(s);
+            self.journal.appendSlice(self.alloc, s) catch @panic("OOM");
+        }
+
+        pub fn vt(
+            self: *Self,
+            comptime action: Action.Tag,
+            value: Action.Value(action),
+        ) void {
+            switch (action) {
+                .clipboard_contents => self.record(
+                    "clip kind={c} term={s} data={s}\n",
+                    .{ value.kind, @tagName(value.terminator), value.data },
+                ),
+                .kitty_clipboard => self.record(
+                    "kitty meta={s} payload={?s}\n",
+                    .{ value.metadata, value.payload },
+                ),
+                .window_title => self.record(
+                    "title {s}\n",
+                    .{value.title},
+                ),
+                // Normalize prints to per-codepoint so the per-byte
+                // and slice paths journal identically.
+                .print => self.record("print {u}\n", .{value.cp}),
+                .print_slice => for (value.cps) |cp| self.record(
+                    "print {u}\n",
+                    .{@as(u21, @intCast(cp))},
+                ),
+                else => {},
+            }
+        }
+    };
+
+    const cases = [_][]const u8{
+        "\x1b]52;c;aGVsbG8=\x1b\\",
+        "\x1b]52;c;aGVsbG8=\x07",
+        "\x1b]52;;aGVsbG8=\x07",
+        // Ignored C0 byte embedded in the payload.
+        "\x1b]52;c;aGVs\x01bG8=\x07",
+        // CAN and SUB aborts.
+        "\x1b]52;c;aGVsbG8=\x18",
+        "\x1b]52;c;aGVsbG8=\x1a",
+        // C1 byte embedded in the payload is data.
+        "\x1b]0;ab\x9ccd\x07",
+        // Terminated with trailing printable text.
+        "\x1b]0;a title\x07x",
+        // Back-to-back sequences.
+        "\x1b]2;another title\x1b\\\x1b]0;t2\x07",
+        "\x1b]5522;type=write;aGVsbG8=\x1b\\",
+        // Invalid OSC number.
+        "\x1b]999;junk\x07",
+        // Exceeds the fixed buffer: allocating capture.
+        "\x1b]52;c;" ++ "y" ** 3000 ++ "\x1b\\",
+        // Exceeds the fixed buffer: overflow, no dispatch.
+        "\x1b]0;" ++ "x" ** 3000 ++ "\x07",
+    };
+
+    for (cases) |case| {
+        // Reference: byte-at-a-time.
+        var ref: Stream(H) = .init(.{
+            .handler = .{ .alloc = alloc },
+            .allocator = alloc,
+        });
+        defer ref.parser.deinit();
+        defer ref.handler.journal.deinit(alloc);
+        for (case) |c| ref.next(c);
+
+        // The whole slice at once.
+        {
+            var s: Stream(H) = .init(.{
+                .handler = .{ .alloc = alloc },
+                .allocator = alloc,
+            });
+            defer s.parser.deinit();
+            defer s.handler.journal.deinit(alloc);
+            s.nextSlice(case);
+            try testing.expectEqualSlices(
+                u8,
+                ref.handler.journal.items,
+                s.handler.journal.items,
+            );
+        }
+
+        // Split into two slices at every possible boundary.
+        for (0..case.len + 1) |split| {
+            var s: Stream(H) = .init(.{
+                .handler = .{ .alloc = alloc },
+                .allocator = alloc,
+            });
+            defer s.parser.deinit();
+            defer s.handler.journal.deinit(alloc);
+            s.nextSlice(case[0..split]);
+            s.nextSlice(case[split..]);
+            try testing.expectEqualSlices(
+                u8,
+                ref.handler.journal.items,
+                s.handler.journal.items,
+            );
+        }
+    }
+}
+
 test "stream: insert characters" {
     const H = struct {
         const Self = @This();
@@ -3598,6 +4257,47 @@ test "stream: send report with CSI t" {
 
     s.nextSlice("\x1b[21t");
     try testing.expectEqual(csi.SizeReportStyle.csi_21_t, s.handler.style);
+}
+
+test "stream: CSI 8 t resize window" {
+    const H = struct {
+        size: ?streampkg.Action.ResizeWindow = null,
+
+        pub fn vt(
+            self: *@This(),
+            comptime action: streampkg.Action.Tag,
+            value: streampkg.Action.Value(action),
+        ) void {
+            switch (action) {
+                .resize_window => self.size = value,
+                else => {},
+            }
+        }
+    };
+
+    var s: Stream(H) = .init(.{ .handler = .{} });
+
+    s.nextSlice("\x1b[8;40;120t");
+    try testing.expectEqual(40, s.handler.size.?.rows);
+    try testing.expectEqual(120, s.handler.size.?.columns);
+
+    // Omitted parameters keep the current size
+    s.nextSlice("\x1b[8;;100t");
+    try testing.expectEqual(0, s.handler.size.?.rows);
+    try testing.expectEqual(100, s.handler.size.?.columns);
+
+    s.nextSlice("\x1b[8;30t");
+    try testing.expectEqual(30, s.handler.size.?.rows);
+    try testing.expectEqual(0, s.handler.size.?.columns);
+
+    s.nextSlice("\x1b[8t");
+    try testing.expectEqual(0, s.handler.size.?.rows);
+    try testing.expectEqual(0, s.handler.size.?.columns);
+
+    // Extra parameters are invalid
+    s.handler.size = null;
+    s.nextSlice("\x1b[8;30;100;1t");
+    try testing.expect(s.handler.size == null);
 }
 
 test "stream: invalid CSI t" {
@@ -3989,6 +4689,18 @@ test "stream: apc bulk slice" {
     }
 }
 
+test "stream: apc bulk slice C1 ST" {
+    var s: Stream(ApcTestHandler) = .init(.{ .handler = .{} });
+    s.nextSlice("\x1b_Gpayload\x9c");
+
+    try testing.expectEqual(@as(usize, 1), s.handler.started);
+    try testing.expectEqual(@as(usize, 1), s.handler.ended);
+    try testing.expectEqualStrings(
+        "Gpayload",
+        s.handler.buf[0..s.handler.len],
+    );
+}
+
 test "stream: apc bulk slice split across inputs" {
     var s: Stream(ApcTestHandler) = .init(.{ .handler = .{} });
     s.nextSlice("\x1b_Gf=24,s=10");
@@ -4120,6 +4832,152 @@ const ContinuationNullHandler = struct {
         _: anytype,
     ) void {}
 };
+
+test "stream: nextSliceUntilGround stops at the earliest boundary" {
+    const S = Stream(ContinuationTestHandler);
+    var stream: S = .init(.{ .handler = .{} });
+    defer stream.deinit();
+
+    stream.nextSlice("\x1b[31");
+    try testing.expect(!stream.ground());
+    stream.handler.committed = 0;
+
+    const input = "mABC\x1b[";
+    const consumed = stream.nextSliceUntilGround(input).?;
+    try testing.expectEqual(@as(usize, 1), consumed);
+    try testing.expect(stream.ground());
+    try testing.expectEqual(@as(usize, 1), stream.handler.committed);
+
+    // The suffix was not inspected by the handler and can be processed after
+    // the caller performs work at the boundary.
+    stream.nextSlice(input[consumed..]);
+    try testing.expect(!stream.ground());
+    try testing.expectEqual(Parser.State.csi_entry, stream.parser.state);
+    try testing.expectEqual(@as(usize, 4), stream.handler.committed);
+}
+
+test "stream: nextSliceUntilGround consumes all input without a boundary" {
+    const S = Stream(ContinuationNullHandler);
+    var stream: S = .init(.{ .handler = .{} });
+    defer stream.deinit();
+
+    try testing.expectEqual(
+        @as(?usize, 0),
+        stream.nextSliceUntilGround("unprocessed"),
+    );
+    try testing.expect(stream.ground());
+
+    stream.nextSlice("\x1b[");
+    try testing.expectEqual(
+        @as(?usize, null),
+        stream.nextSliceUntilGround("123"),
+    );
+    try testing.expect(!stream.ground());
+
+    // A boundary on the final byte is distinguishable from exhausting the
+    // input while still pending.
+    try testing.expectEqual(
+        @as(?usize, 1),
+        stream.nextSliceUntilGround("m"),
+    );
+    try testing.expect(stream.ground());
+}
+
+test "stream: nextSliceUntilGround handles UTF-8 boundaries" {
+    const S = Stream(ContinuationTestHandler);
+
+    // A completed codepoint is committed synchronously, and the printable
+    // suffix remains untouched.
+    var valid: S = .init(.{ .handler = .{} });
+    defer valid.deinit();
+    valid.nextSlice(&.{0xF0});
+    const valid_input = [_]u8{ 0x9F, 0x98, 0x84, 'X' };
+    try testing.expectEqual(
+        @as(?usize, 3),
+        valid.nextSliceUntilGround(&valid_input),
+    );
+    try testing.expect(valid.ground());
+    try testing.expectEqual(@as(usize, 1), valid.handler.committed);
+
+    // A malformed continuation emits the replacement codepoint and retries
+    // the same byte. Ground is observed after that complete byte operation.
+    var malformed: S = .init(.{ .handler = .{} });
+    defer malformed.deinit();
+    malformed.nextSlice(&.{ 0xE0, 0xA0 });
+    try testing.expectEqual(
+        @as(?usize, 1),
+        malformed.nextSliceUntilGround("A!"),
+    );
+    try testing.expect(malformed.ground());
+    try testing.expectEqual(@as(usize, 2), malformed.handler.committed);
+
+    // If the retried byte is ESC, the stream has begun VT state at the end of
+    // that byte and must continue to the following ground boundary.
+    var retry_escape: S = .init(.{ .handler = .{} });
+    defer retry_escape.deinit();
+    retry_escape.nextSlice(&.{ 0xE0, 0xA0 });
+    try testing.expectEqual(
+        @as(?usize, 3),
+        retry_escape.nextSliceUntilGround("\x1b[mX"),
+    );
+    try testing.expect(retry_escape.ground());
+}
+
+test "stream: nextSliceUntilGround handles aborts and bulk strings" {
+    const S = Stream(ContinuationTestHandler);
+
+    var aborted: S = .init(.{ .handler = .{} });
+    defer aborted.deinit();
+    aborted.nextSlice("\x1b[123");
+    try testing.expectEqual(
+        @as(?usize, 1),
+        aborted.nextSliceUntilGround(&.{ 0x18, 'X' }),
+    );
+    try testing.expect(aborted.ground());
+
+    var apc: S = .init(.{ .handler = .{} });
+    defer apc.deinit();
+    apc.nextSlice("\x1b_Gseed");
+    var input: [131]u8 = undefined;
+    @memset(input[0..128], 'a');
+    input[128..130].* = "\x1b\\".*;
+    input[130] = 'X';
+    try testing.expectEqual(
+        @as(?usize, 130),
+        apc.nextSliceUntilGround(&input),
+    );
+    try testing.expect(apc.ground());
+}
+
+test "stream: nextSliceUntilGround tracks only the consumed prefix" {
+    const S = Stream(ContinuationNullHandler);
+    var stream: S = .init(.{
+        .allocator = testing.allocator,
+        .handler = .{},
+        .continuation_max_bytes = 64,
+    });
+    defer stream.deinit();
+
+    stream.nextSlice("\x1b[31");
+    try testing.expectEqual(
+        @as(?usize, 1),
+        stream.nextSliceUntilGround("mX\x1b["),
+    );
+
+    var buf: [64]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try stream.writeContinuation(&writer);
+    try testing.expectEqual(@as(usize, 0), writer.buffered().len);
+
+    stream.nextSlice("\x1b[");
+    try testing.expectEqual(
+        @as(?usize, null),
+        stream.nextSliceUntilGround("123"),
+    );
+    var pending_writer: std.Io.Writer = .fixed(&buf);
+    try stream.writeContinuation(&pending_writer);
+    try testing.expectEqualStrings("\x1b[123", pending_writer.buffered());
+}
 
 test "stream: continuation lifecycle" {
     const S = Stream(ContinuationTestHandler);

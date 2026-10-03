@@ -88,6 +88,31 @@ int main(void) {
   ghostty_terminal_free(full_terminal);
   //! [snapshot-decode]
 
+  //! [snapshot-compress-history]
+  GhosttySnapshotDecoder compressed_decoder = NULL;
+  result = ghostty_snapshot_decoder_new_buf(
+      NULL, &compressed_decoder, snapshot, snapshot_len);
+  assert(result == GHOSTTY_SUCCESS);
+
+  // Options must be set before decoding starts. With this set, each history
+  // page is compressed as soon as it is restored, so the full scrollback is
+  // never held uncompressed in memory.
+  const bool compress_history = true;
+  result = ghostty_snapshot_decoder_set(
+      compressed_decoder,
+      GHOSTTY_SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY,
+      &compress_history);
+  assert(result == GHOSTTY_SUCCESS);
+
+  GhosttyTerminal compressed_terminal = NULL;
+  result = ghostty_snapshot_decoder_decode(
+      compressed_decoder, &compressed_terminal);
+  assert(result == GHOSTTY_SUCCESS);
+
+  ghostty_snapshot_decoder_free(compressed_decoder);
+  ghostty_terminal_free(compressed_terminal);
+  //! [snapshot-compress-history]
+
   //! [snapshot-incremental]
   BufferReader reader_state = {
       .data = snapshot,
@@ -104,7 +129,7 @@ int main(void) {
       NULL, &incremental_decoder, reader);
   assert(result == GHOSTTY_SUCCESS);
 
-  // READY authenticates and returns a renderable terminal before old history.
+  // READY returns a validated, renderable terminal before old history.
   GhosttyTerminal incremental_terminal = NULL;
   result = ghostty_snapshot_decoder_ready(
       incremental_decoder, &incremental_terminal);
@@ -146,7 +171,7 @@ int main(void) {
     page_count++;
   }
 
-  // NO_VALUE means FINISH authenticated successfully and is idempotent.
+  // NO_VALUE means FINISH validated successfully and is idempotent.
   assert(result == GHOSTTY_NO_VALUE);
   assert(page_count > 0);
   assert(ghostty_snapshot_decoder_next(incremental_decoder) ==

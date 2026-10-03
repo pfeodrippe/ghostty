@@ -233,12 +233,22 @@ pub const Decoder = struct {
         // payload, so this is the byte count of the tables and grid.
         const remaining = self.record_reader.header.payload_len - Header.len;
 
-        if (remaining <= max_staged_payload) {
-            // Stage the payload with one bulk read. The whole payload
-            // passes through both hashes as one update and the payload
-            // decoders then parse a flat buffer, which keeps per-row work
-            // free of stream adapters. The CRC and exact-length checks in
-            // `finish` are unaffected.
+        if (self.record_reader.payloadReader().bufferedLen() >= remaining) {
+            // The complete payload is already buffered, e.g. borrowed from
+            // an in-memory snapshot. Parse it in place with no staging
+            // copy; `finish` still enforces the CRC and exact exhaustion.
+            try decodePayloadBody(
+                self.record_reader.payloadReader(),
+                alloc,
+                destination,
+                self.header,
+            );
+        } else if (remaining <= max_staged_payload) {
+            // Stage the payload with one bulk read. The whole payload passes
+            // through the checksum hasher as one update and the payload
+            // decoders then parse a flat buffer, which keeps per-row work free
+            // of stream adapters. The CRC and exact-length checks in `finish`
+            // are unaffected.
             const staged = try alloc.alloc(u8, remaining);
             defer alloc.free(staged);
             try self.record_reader.payloadReader().readSliceAll(staged);
@@ -289,10 +299,8 @@ pub const DiscardError = record.Reader.InitError ||
 /// Consume exactly one complete PAGE record, validating its framing and
 /// CRC32C while discarding the payload without structural validation.
 ///
-/// The payload bytes still stream through `source`, so an enclosing running
-/// digest (such as the FINISH checkpoint) continues to cover them. This lets
-/// a decoder stay aligned with the record sequence, and keep authenticating
-/// it, while dropping page content it can no longer apply.
+/// This lets a decoder stay aligned with the record sequence while dropping
+/// page content it can no longer apply.
 pub fn discard(source: *std.Io.Reader) DiscardError!void {
     var record_reader: record.Reader = undefined;
     try record_reader.init(source);
@@ -359,31 +367,51 @@ fn decodePayloadBody(
     page.pauseIntegrityChecks(true);
     defer page.pauseIntegrityChecks(false);
 
-    var style_remap = grid.StyleRemap.init(alloc) catch
-        return error.OutOfMemory;
+    // Pages without styles or hyperlinks, the common case for plain
+    // scrollback, skip the remap tables entirely: every encoded cell ID
+    // resolves to the default through the empty remap.
+    var style_remap: grid.StyleRemap = if (header.style_count > 0)
+        grid.StyleRemap.init(alloc) catch return error.OutOfMemory
+    else
+        .empty;
     defer style_remap.deinit(alloc);
 
-    var hyperlink_remap = grid.HyperlinkRemap.init(alloc) catch
-        return error.OutOfMemory;
+    var hyperlink_remap: grid.HyperlinkRemap = if (header.hyperlink_count > 0)
+        grid.HyperlinkRemap.init(alloc) catch return error.OutOfMemory
+    else
+        .empty;
     defer hyperlink_remap.deinit(alloc);
 
-    // Styles
+    // Styles. The complete fixed-size entry is parsed from the buffered
+    // payload when possible so each entry costs no reader calls.
+    const style_entry_len = @sizeOf(TerminalStyleId) + style.len;
     for (0..header.style_count) |_| {
-        const native_id = try io.readInt(reader, TerminalStyleId);
-        const value = try style.decodeOrNull(reader);
+        const native_id: TerminalStyleId, const value = entry: {
+            if (reader.bufferedLen() >= style_entry_len) {
+                const bytes = reader.buffered()[0..style_entry_len];
+                defer reader.toss(style_entry_len);
+                break :entry .{
+                    std.mem.readInt(TerminalStyleId, bytes[0..2], .little),
+                    style.parseOrNull(bytes[2..][0..style.len]),
+                };
+            }
+            break :entry .{
+                try io.readInt(reader, TerminalStyleId),
+                try style.decodeOrNull(reader),
+            };
+        };
 
         // Zero is reserved for the implicit default. For a duplicate encoded
         // ID, the first entry wins and this complete entry is simply ignored.
         if (native_id == 0 or style_remap.contains(native_id)) continue;
 
-        // Invalid/default styles map to the native default. Repeated concrete
-        // values share the existing native entry, while capacity failure also
-        // degrades only this style.
+        // Invalid/default styles map to the native default. `add` returns
+        // the existing entry for a repeated concrete value, taking one
+        // reference either way, while capacity failure degrades only this
+        // style. The references are surrendered through the remap below
+        // once every cell reference is installed.
         const decoded_id: TerminalStyleId = if (value) |valid| decoded: {
             if (valid.default()) break :decoded 0;
-            if (page.styles.lookup(page.memory, valid)) |existing| {
-                break :decoded existing;
-            }
             break :decoded page.styles.add(
                 page.memory,
                 valid,
@@ -419,16 +447,17 @@ fn decodePayloadBody(
         &hyperlink_remap,
     );
 
-    // A newly inserted table value starts with one reference so grid decoding
-    // can safely attach it to any number of cells. Unlike organically built
-    // pages, that initial reference does not itself represent a cell. Release
-    // it once per distinct live style after every cell reference is installed;
-    // unused entries then become dead and disappear from canonical re-encoding.
-    for (1..@as(usize, page.styles.next_id)) |raw_id| {
-        const id: TerminalStyleId = @intCast(raw_id);
-        if (page.styles.refCount(page.memory, id) > 0) {
-            page.styles.release(page.memory, id);
-        }
+    // Every accepted table entry took one reference through `add` so grid
+    // decoding can safely attach its style to any number of cells. Unlike
+    // organically built pages, those references do not themselves represent
+    // cells. Release through the encoded-ID remap, so duplicate values
+    // which deduplicated to the same native ID each surrender their own
+    // reference; unused entries then become dead and disappear from
+    // canonical re-encoding.
+    var style_it = style_remap.seen.iterator(.{});
+    while (style_it.next()) |encoded_id| {
+        const id = style_remap.entries[encoded_id];
+        if (id != 0) page.styles.release(page.memory, id);
     }
 
     // Hyperlink insertion likewise creates one temporary reference for every
@@ -1658,7 +1687,7 @@ test "decode reuses duplicate hyperlinks" {
     try std.testing.expectEqual(@as(usize, 0), decoded.hyperlink_set.count());
 }
 
-test "discard consumes exactly one PAGE record and keeps digest coverage" {
+test "discard consumes exactly one PAGE record" {
     const testing = std.testing;
 
     // Discard validates framing only, so an arbitrary payload keeps this test
@@ -1676,19 +1705,8 @@ test "discard consumes exactly one PAGE record and keeps digest coverage" {
     const record_len = encoded.written().len;
     try encoded.writer.writeAll("next");
 
-    // Discarded payload bytes must still update an enclosing running digest,
-    // which is what lets a snapshot FINISH checkpoint authenticate records
-    // whose content was dropped.
     var source: std.Io.Reader = .fixed(encoded.written());
-    var hashed: record.StreamReader = .init(&source);
-    try discard(hashed.reader());
-    var expected_digest: record.PrefixDigest = undefined;
-    std.crypto.hash.Blake3.hash(
-        encoded.written()[0..record_len],
-        &expected_digest,
-        .{},
-    );
-    try testing.expectEqual(expected_digest, hashed.prefixDigest());
+    try discard(&source);
     try testing.expectEqualStrings("next", try source.take(4));
 
     // Only PAGE records may be discarded; the tag remains strict.

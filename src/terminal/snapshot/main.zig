@@ -14,7 +14,7 @@
 //! terminal and reconstruct its unfinished VT Stream state.
 //!
 //! After READY, we send history pages (scrollback). Finally, the
-//! snapshot ends with a FINISH payload.
+//! snapshot ends with an empty FINISH marker.
 //!
 //! ## Snapshot Format
 //!
@@ -75,12 +75,12 @@
 //! VT parser/stream up to the same state, or no bytes if it should be
 //! in the ground state.
 //!
-//! READY and FINISH contain BLAKE3-256 digests of all preceding snapshot bytes.
-//! READY therefore validates the renderable active state and continuation.
-//! FINISH covers READY and all history as well, validating the complete snapshot
-//! and its record ordering. Each SCREEN declares its complete logical history
-//! extent, allowing a client to size its scrollbar at READY even though older
-//! PAGE records arrive afterward.
+//! READY and FINISH are empty marker records. READY separates the renderable
+//! active state and continuation from history; FINISH terminates the complete
+//! snapshot. Every record, including both markers, is independently protected
+//! by CRC32C. Each SCREEN declares its complete logical history extent, allowing
+//! a client to size its scrollbar at READY even though older PAGE records arrive
+//! afterward.
 //!
 //! ## Encoding
 //!
@@ -99,12 +99,12 @@
 //!
 //! Encoding begins at the writer's current position, so unrelated bytes may
 //! precede the snapshot. The encoder buffers only the current record payload
-//! to calculate its length and CRC32C; completed records stream immediately
-//! and BLAKE3 checkpoint coverage is updated incrementally. Buffering is an
-//! encoder implementation detail, not a requirement of the wire format.
+//! to calculate its length and CRC32C; completed records stream immediately.
+//! Buffering is an encoder implementation detail, not a requirement of the
+//! wire format.
 //!
 //! A failure may leave prior complete records, or a partial record if the
-//! destination itself fails. Such a prefix has no valid FINISH checkpoint and
+//! destination itself fails. Such a prefix has no FINISH marker and
 //! cannot be restored as a complete snapshot.
 //!
 //! Each record type usually exposes an `encode` function that encodes
@@ -151,6 +151,24 @@
 //!     _ = progress; // Scrollback grew.
 //! }
 //! ```
+//!
+//! ### Compressed History
+//!
+//! Decoded history is uncompressed by default, even if the encoded terminal
+//! had compressed it. Set `compress_history` to compress each history page
+//! as soon as it is restored. The restored terminal is then compressed from
+//! the start, and the decode never holds the complete history uncompressed
+//! in memory:
+//!
+//! ```zig
+//! var decoded = try snapshot.decode(alloc, io, &reader, .{
+//!     .max_continuation_bytes = 1024 * 1024,
+//!     .compress_history = true,
+//! });
+//! ```
+//!
+//! This works the same way with `snapshot.Decoder`. The snapshot format does
+//! not change, so any snapshot can be decoded with or without it.
 
 pub const checkpoint = @import("checkpoint.zig");
 pub const continuation = @import("continuation.zig");

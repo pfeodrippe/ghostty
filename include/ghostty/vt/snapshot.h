@@ -7,6 +7,7 @@
 #ifndef GHOSTTY_VT_SNAPSHOT_H
 #define GHOSTTY_VT_SNAPSHOT_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -23,12 +24,12 @@ extern "C" {
  *
  * Encode and restore the complete state of a terminal via a binary format.
  *
- * A snapshot is an ordered, authenticated record stream. Its READY checkpoint
- * contains enough state to render and resume the terminal, including any
+ * A snapshot is an ordered, CRC-protected record stream. Its READY marker
+ * follows enough state to render and resume the terminal, including any
  * unfinished VT parser input. Older scrollback pages follow READY and the
- * FINISH checkpoint authenticates the complete snapshot.
+ * FINISH marker terminates the complete snapshot.
  *
- * End-of-file before an operation's required READY or FINISH checkpoint is
+ * End-of-file before an operation's required READY or FINISH marker is
  * malformed, truncated snapshot data and returns GHOSTTY_INVALID_VALUE.
  * GHOSTTY_IO_ERROR is reserved for a reader callback that returns false.
  *
@@ -91,22 +92,22 @@ extern "C" {
  * +------------- CONTINUATION ---------------+
  * | unfinished VT/UTF-8 input, or ground     |
  * +------------------ READY -----------------+
- * | BLAKE3-256 of every preceding byte       |  ready() returns here
+ * | empty renderable-state marker            |  ready() returns here
  * +----------------- HISTORY ----------------+  repeated per screen
  * | scrollback manifest                      |
  * +------------------ PAGE ------------------+  next() consumes one page
  * | older screen rows                        |
  * +------------------ FINISH ----------------+
- * | BLAKE3-256 of every preceding byte       |  next() returns NO_VALUE
+ * | empty end-of-snapshot marker              |  next() returns NO_VALUE
  * +------------------------------------------+
  * | trailing transport bytes (not consumed) |
  * +------------------------------------------+
  * @endcode
  *
- * READY authenticates the renderable prefix through CONTINUATION. FINISH
- * authenticates READY and every history record as well as the earlier prefix.
- * Thus record CRC32C detects local corruption while the BLAKE3 checkpoints
- * also bind the ordering and completeness of the record stream.
+ * READY separates the renderable prefix through CONTINUATION from history.
+ * FINISH terminates the record sequence. Both are empty records protected by
+ * CRC32C, like every other record. Declared record counts, tags, and strict
+ * decoding enforce the stream's ordering and completeness.
  *
  * Snapshot format version 1 is a work in progress and does not yet carry a
  * binary-compatibility guarantee.
@@ -131,12 +132,66 @@ typedef enum GHOSTTY_ENUM_TYPED {
    * state. The decoder default matches the largest built-in APC protocol
    * buffer limit, currently 65 MiB.
    *
-   * This is an input validation limit only. It does not configure continuation
-   * tracking on a terminal returned by the decoder.
+   * This is primarily an input validation limit. When
+   * GHOSTTY_SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION is true, the same value
+   * also becomes the continuation tracking limit on the returned terminal.
    *
    * Input type: size_t *
    */
   GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES = 0,
+
+  /**
+   * Retain the decoded continuation on the returned terminal.
+   *
+   * When true, terminals returned by ghostty_snapshot_decoder_ready() and
+   * ghostty_snapshot_decoder_decode() use
+   * GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES as their continuation
+   * tracking limit. The existing ghostty_terminal_continuation_* APIs can then
+   * export the exact unfinished VT or UTF-8 input restored from the snapshot.
+   *
+   * This is false by default. A maximum continuation size of zero leaves
+   * tracking disabled. With a nonzero maximum, tracking remains enabled even
+   * when the decoded continuation is empty. Exporting an empty continuation
+   * does not disable it. Callers that do not need ongoing tracking must still
+   * set GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES to zero after export and
+   * before writing post-snapshot input.
+   *
+   * Input type: bool *
+   */
+  GHOSTTY_SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION = 1,
+
+  /**
+   * Compress scrollback history while it is restored.
+   *
+   * By default, restoring a snapshot leaves all of its scrollback history
+   * uncompressed, even if the terminal that produced the snapshot had
+   * compressed it. The history stays that size until the application calls
+   * ghostty_terminal_compress(). For a terminal with a lot of scrollback,
+   * that can be many times more memory than the terminal needed before.
+   *
+   * When this option is true, the decoder compresses each history page right
+   * after restoring it. The restored terminal starts out compressed, and the
+   * decode never holds more than one uncompressed history page at a time.
+   * The result is the same as decoding normally and then calling
+   * ghostty_terminal_compress() with GHOSTTY_TERMINAL_COMPRESSION_MODE_FULL,
+   * without the memory spike in between.
+   *
+   * A history page that is on screen when it is restored stays uncompressed.
+   * This only happens if the viewport is scrolled to the top of the
+   * scrollback during an incremental decode. Compressed history is
+   * uncompressed automatically when it is accessed later, for example by
+   * scrolling or searching.
+   *
+   * This only changes how the restored terminal stores its history in
+   * memory. The snapshot format is unchanged, so it works with any snapshot.
+   * On platforms that do not support scrollback compression, this option is
+   * accepted and has no effect.
+   *
+   * This is false by default.
+   *
+   * Input type: bool *
+   */
+  GHOSTTY_SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY = 2,
 
   GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
 } GhosttySnapshotDecoderOption;
@@ -206,7 +261,7 @@ typedef enum GHOSTTY_ENUM_TYPED {
   /**
    * Rows prepended by the most recently decoded history page.
    *
-   * Zero means the page was consumed and authenticated but could not be
+   * Zero means the page was consumed and validated but could not be
    * applied to the live terminal.
    *
    * Output type: size_t *
@@ -221,6 +276,25 @@ typedef enum GHOSTTY_ENUM_TYPED {
    * Output type: uint32_t *
    */
   GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_REMAINING = 7,
+
+  /**
+   * Whether decoded continuation tracking is retained on returned terminals.
+   *
+   * This value is available in every non-failed decoder state.
+   *
+   * Output type: bool *
+   */
+  GHOSTTY_SNAPSHOT_DECODER_DATA_RETAIN_CONTINUATION = 8,
+
+  /**
+   * Whether history is compressed while it is restored.
+   *
+   * See GHOSTTY_SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY. This value is
+   * available in every non-failed decoder state.
+   *
+   * Output type: bool *
+   */
+  GHOSTTY_SNAPSHOT_DECODER_DATA_COMPRESS_HISTORY = 9,
 
   GHOSTTY_SNAPSHOT_DECODER_DATA_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
 } GhosttySnapshotDecoderData;
@@ -238,7 +312,7 @@ typedef enum GHOSTTY_ENUM_TYPED {
  * otherwise this returns GHOSTTY_INVALID_VALUE.
  *
  * Encoding begins at the writer's current position. If an error occurs, the
- * writer may contain a partial snapshot without a valid FINISH checkpoint.
+ * writer may contain a partial snapshot without a valid FINISH marker.
  * Calls to the writer are synchronous; this function does not flush or make
  * the caller's destination durable.
  *
@@ -319,7 +393,7 @@ GHOSTTY_API GhosttyResult ghostty_snapshot_encode_alloc(
  * wait outside the decoder or block in their callback. The read callback must
  * not call APIs, including ghostty_snapshot_decoder_free(), on the decoder
  * that owns it. Returning false reports GHOSTTY_IO_ERROR; returning true with
- * zero bytes before a required checkpoint reports truncated snapshot data as
+ * zero bytes before a required marker reports truncated snapshot data as
  * GHOSTTY_INVALID_VALUE.
  *
  * @param allocator Allocator for decoder and decoded terminal state, or NULL
@@ -390,17 +464,23 @@ GHOSTTY_API GhosttyResult ghostty_snapshot_decoder_set(
     const void* value);
 
 /**
- * Decode and authenticate the renderable snapshot prefix through READY.
+ * Decode and validate the renderable snapshot prefix through READY.
  *
  * On success, terminal receives a caller-owned terminal with its persistent
  * VT stream already restored from the snapshot continuation. The terminal is
  * immediately usable for rendering and live input. Older scrollback remains
  * to be restored with ghostty_snapshot_decoder_next().
  *
- * The restored parser state may be unfinished, but terminal continuation
- * tracking is disabled; GHOSTTY_TERMINAL_DATA_CONTINUATION_MAX_BYTES returns
- * zero. The decoder's continuation option is an input limit, not terminal
- * runtime policy.
+ * The restored parser state may be unfinished. By default, terminal
+ * continuation tracking is disabled and
+ * GHOSTTY_TERMINAL_DATA_CONTINUATION_MAX_BYTES returns zero. When
+ * GHOSTTY_SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION is true, the decoder's
+ * maximum continuation size is applied to the terminal, and the terminal
+ * continuation APIs export the exact current continuation when that limit is
+ * nonzero. Tracking remains enabled even if the exported continuation is
+ * empty. Callers that do not need ongoing tracking must set
+ * GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES to zero after export and before
+ * writing any post-snapshot bytes, because later input may change it.
  *
  * The caller must keep the returned terminal alive until FINISH validates or
  * the decoder is freed. The decoder borrows this terminal handle while it
@@ -425,15 +505,19 @@ GHOSTTY_API GhosttyResult ghostty_snapshot_decoder_ready(
 /**
  * Decode one history page into the terminal returned by READY.
  *
- * Each GHOSTTY_SUCCESS consumes and authenticates one PAGE record. Query the
+ * Each GHOSTTY_SUCCESS consumes and validates one PAGE record. Query the
  * GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_* values before calling next again.
  * GHOSTTY_NO_VALUE means FINISH was validated; repeated calls after FINISH
  * also return GHOSTTY_NO_VALUE.
  *
  * The terminal may be rendered, resized, and fed live PTY input between calls.
  * If a history page can no longer be applied safely, it is still consumed and
- * authenticated and progress reports zero rows. The decoder applies history
+ * validated and progress reports zero rows. The decoder applies history
  * to the caller-owned terminal produced by its READY operation.
+ *
+ * If GHOSTTY_SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY is true, the page is
+ * compressed before this function returns, unless it is visible in the
+ * terminal's viewport.
  *
  * A decoding error invalidates the decoder's source position. The terminal
  * remains caller-owned and usable with its already-restored history, but only
@@ -449,14 +533,21 @@ GHOSTTY_API GhosttyResult ghostty_snapshot_decoder_next(
     GhosttySnapshotDecoder decoder);
 
 /**
- * Decode and authenticate one complete snapshot.
+ * Decode and validate one complete snapshot.
  *
  * This is the one-shot form of READY followed by all history pages through
  * FINISH. It may only be called before decoding starts. Bytes following FINISH
  * are left unread. On success terminal receives a caller-owned terminal with
  * its persistent VT stream restored. Continuation tracking on the returned
- * terminal is disabled and GHOSTTY_TERMINAL_DATA_CONTINUATION_MAX_BYTES
- * returns zero. terminal is set to NULL on every error.
+ * terminal is disabled by default. When
+ * GHOSTTY_SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION is true, the decoder's
+ * maximum continuation size is applied to the terminal, and the terminal
+ * continuation APIs export the exact current continuation when that limit is
+ * nonzero. Tracking remains enabled even if the exported continuation is
+ * empty. Callers that do not need ongoing tracking must set
+ * GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES to zero after export and before
+ * writing any post-snapshot bytes, because later input may change it.
+ * terminal is set to NULL on every error.
  * A decoding, I/O, or allocation error after input consumption begins poisons
  * the decoder, after which it must be freed. An invalid argument or
  * lifecycle error detected before the operation consumes input does not
