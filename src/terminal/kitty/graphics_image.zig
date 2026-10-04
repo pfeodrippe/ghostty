@@ -224,7 +224,7 @@ pub const LoadingImage = struct {
         // Since we're only supporting posix then max_path_bytes should
         // be enough to stack allocate the path.
         var buf: [std.fs.max_path_bytes]u8 = undefined;
-        const pathz = std.fmt.bufPrintZ(&buf, "{s}", .{path}) catch return error.InvalidData;
+        const pathz = std.mem.printSentinel(&buf, "{s}", .{path}, 0) catch return error.InvalidData;
 
         const fd = std.c.shm_open(pathz, @as(c_int, @bitCast(std.c.O{ .ACCMODE = .RDONLY })), @as(u16, 0));
         switch (std.posix.errno(fd)) {
@@ -456,7 +456,7 @@ pub const LoadingImage = struct {
                     else => error.InvalidData,
                 };
             };
-            managed = .{ .items = data, .capacity = data.len };
+            managed = .fromOwnedSlice(data);
         } else {
             reader.appendRemaining(alloc, &managed, .limited(max_size)) catch {
                 log.warn("failed to read image file: {?}", .{buf_reader.err});
@@ -466,7 +466,7 @@ pub const LoadingImage = struct {
 
         // Set our data
         assert(self.data.items.len == 0);
-        self.data = .{ .items = managed.items, .capacity = managed.capacity };
+        self.data = managed;
     }
 
     /// Returns the canonical path of an open file after applying the file
@@ -602,7 +602,7 @@ pub const LoadingImage = struct {
     /// Debug function to write the data to a file. This is useful for
     /// capturing some test data for unit tests.
     pub fn debugDump(io: std.Io, self: LoadingImage) !void {
-        if (comptime builtin.mode != .Debug) @compileError("debugDump in non-debug");
+        if (comptime builtin.mode != .debug) @compileError("debugDump in non-debug");
 
         var buf: [1024]u8 = undefined;
         const filename = try std.fmt.bufPrint(
@@ -662,7 +662,7 @@ pub const LoadingImage = struct {
         };
 
         self.data.deinit(alloc);
-        self.data = .{ .items = decompressed, .capacity = decompressed.len };
+        self.data = .fromOwnedSlice(decompressed);
 
         // Make sure we note that our image is no longer compressed
         self.image.compression = .none;

@@ -92,7 +92,7 @@ pub fn init(opts: InitOpts) !void {
         // can get easy memory leak detection in debug modes.
         if (builtin.link_libc) {
             if (switch (builtin.mode) {
-                .ReleaseSafe, .ReleaseFast => true,
+                .safe, .fast => true,
 
                 // We also use it if we can detect we're running under
                 // Valgrind since Valgrind only instruments the C allocator
@@ -100,7 +100,7 @@ pub fn init(opts: InitOpts) !void {
             }) break :gpa null;
         }
 
-        break :gpa .init;
+        break :gpa .init(std.heap.page_allocator, .{});
     };
 
     self.alloc = if (self.gpa) |*value|
@@ -375,7 +375,7 @@ pub fn action() ?cli.ghostty.Action {
 /// be one of these at any given moment. This is extracted into a dedicated
 /// struct because it is reused by main and the static C lib.
 pub const GlobalState = struct {
-    const GPA = std.heap.DebugAllocator(.{});
+    const GPA = std.heap.SafeAllocator;
 
     io_impl: std.Io.Threaded,
     gpa: ?GPA,

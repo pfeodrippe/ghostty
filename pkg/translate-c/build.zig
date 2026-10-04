@@ -1,11 +1,11 @@
-//! This is a wrapper package for our use of translate-c. It provides helpers
-//! for short-hand addition of the translation of C files and headers, along
-//! with lower-level control of the process a la the standard external
-//! translate-c package.
+//! C header translation and linked-module setup using Zig's bundled translator.
 
 const std = @import("std");
 const apple_sdk = @import("apple_sdk");
-pub const Translator = @import("translate_c").Translator;
+pub const Translation = struct {
+    step: *std.Build.Step.TranslateC,
+    mod: *std.Build.Module,
+};
 
 /// Options for translation.
 pub const Options = struct {
@@ -52,7 +52,7 @@ pub const Options = struct {
     target: std.Build.ResolvedTarget,
 
     /// The optimization mode to perform translation as.
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
 
     /// Whether or not to link in libc. Generally you want this.
     link_libc: bool = true,
@@ -87,34 +87,10 @@ pub const Options = struct {
     /// platform.
     link_frameworks: []const []const u8 = &.{},
 
-    /// Whether or not struct fields should be initialized by default. This
-    /// passes the `default-init` flag directly to the translate-c process in
-    /// its literal form (null means no flag added).
-    default_init: ?bool = null,
-
-    /// Supply an external libc file. The expected format here is exactly what
-    /// you would get if you ran `zig libc` and can be used if the toolchain on
-    /// a particular target has a hard time auto-detecting these paths.
-    libc_file: union(enum) {
-        /// Auto-detect if we are targeting Darwin in the target options, and
-        /// if we are, generate a libc file to use here automatically. This
-        /// ensures that translation can correctly locate a MacOS SDK versus
-        /// the Zig-supplied generic Darwin headers.
-        detect_darwin,
-
-        /// Supply a direct file for use here.
-        direct: ?std.Build.LazyPath,
-    } = .detect_darwin,
-
     /// Extra arguments passed to Aro. Use this if you need to pass along extra
     /// compiler flags to the translation process to make sure the headers are
     /// pre-processed correctly before translation.
     extra_args: []const []const u8 = &.{},
-
-    /// The name of this dependency in the caller's build.zig.zon file. If you
-    /// name the dependency anything else other than `translate_c`, change this
-    /// to match.
-    dependency_name: []const u8 = "translate_c",
 };
 
 /// Creates a translation step and adds the result as import referred to by
@@ -138,30 +114,10 @@ pub fn addImportToModule(
     module.addImport(name, translated.mod);
 }
 
-/// Mainly serves as a pass-through for the independent translate-c
-/// `Translator.init`, but also adds additional paths before returning.
-///
-/// Unless you need the actual translation object for more complex build
-/// chains, it's recommended to use the higher-level methods such as
-/// `addImportToModule`.
-pub fn init(b: *std.Build, options: Options) !Translator {
-    const translated = try initTranslator(b, options);
-    for (options.link_libs) |lib| translated.linkLibrary(lib);
-    for (options.include_paths) |path| translated.addIncludePath(path);
-    for (options.system_include_paths) |path| translated.addSystemIncludePath(path);
-    for (options.link_frameworks) |framework| translated.mod.linkFramework(framework, .{});
-    return translated;
-}
-
-/// Mainly serves as a pass-through for the independent translate-c
-/// `Translator.init`. Unless you need the actual translation object for more
-/// complex build chains, it's recommended to use the higher-level methods such
-/// as `addImportToModule`.
-pub fn initTranslator(b: *std.Build, options: Options) !Translator {
-    const this_dep = b.dependency(options.dependency_name, .{});
-    const translate_c_dep = this_dep.builder.dependency("translate_c", .{});
-    return .init(translate_c_dep, .{
-        .c_source_file = switch (options.source) {
+/// Create the translation step and its module, sharing include and link inputs.
+pub fn init(b: *std.Build, options: Options) !Translation {
+    const step = b.addTranslateC(.{
+        .root_source_file = switch (options.source) {
             .file => |f| f,
             .includes => |includes| b.addWriteFiles().add(
                 includes.generated_name orelse "c.h",
@@ -171,41 +127,42 @@ pub fn initTranslator(b: *std.Build, options: Options) !Translator {
         .target = options.target,
         .optimize = options.optimize,
         .link_libc = options.link_libc,
-        .link_system_libs = try marshalSystemLibs(b, options.link_system_libs),
-        .default_init = options.default_init,
-        .libc_file = switch (options.libc_file) {
-            .detect_darwin => if (options.target.result.os.tag.isDarwin()) libc_file: {
-                switch (try apple_sdk.pathsForTarget(this_dep.builder, options.target.result)) {
-                    inline else => |paths| break :libc_file paths.libc,
-                }
-            } else null,
-            .direct => |libc_file| libc_file,
-        },
-        .extra_args = options.extra_args,
     });
-}
-
-/// Marshals linked system libraries into the `Translator.LinkSystemLib`
-/// format, which includes the link options for each library.
-///
-/// All system libraries linked this way are linked dynamic-preferred with a
-/// fallback to static.
-///
-/// Note that this uses the builder arena and as such does not need to be freed.
-fn marshalSystemLibs(b: *std.Build, libs: []const []const u8) ![]Translator.LinkSystemLib {
-    var result: std.ArrayList(Translator.LinkSystemLib) = .empty;
-    try result.ensureTotalCapacityPrecise(b.allocator, libs.len);
-    for (libs) |name| {
-        result.appendAssumeCapacity(.{
-            .name = name,
-            .options = .{
-                .preferred_link_mode = .dynamic,
-                .search_strategy = .mode_first,
-            },
+    step.addCFlags(options.extra_args);
+    for (options.link_system_libs) |name| {
+        step.linkSystemLibrary(name, .{
+            .preferred_link_mode = .dynamic,
+            .search_strategy = .mode_first,
         });
     }
-
-    return result.items;
+    const module = step.createModule();
+    for (options.link_libs) |lib| {
+        step.addIncludePath(lib.getEmittedIncludeTree());
+        module.linkLibrary(lib);
+    }
+    for (options.include_paths) |path| {
+        step.addIncludePath(path);
+        module.addIncludePath(path);
+    }
+    for (options.system_include_paths) |path| {
+        step.addSystemIncludePath(path);
+        module.addSystemIncludePath(path);
+    }
+    for (options.link_frameworks) |framework| module.linkFramework(framework, .{});
+    if (options.target.result.os.tag.isDarwin()) {
+        switch (try apple_sdk.pathsForTarget(b, options.target.result)) {
+            .native => |paths| {
+                const includes = b.graph.cwdRelativePath(paths.system_include);
+                const frameworks = b.graph.cwdRelativePath(paths.framework);
+                step.addSystemIncludePath(includes);
+                step.addSystemFrameworkPath(frameworks);
+                module.addSystemIncludePath(includes);
+                module.addSystemFrameworkPath(frameworks);
+            },
+            .cross => {},
+        }
+    }
+    return .{ .step = step, .mod = module };
 }
 
 /// Builds the source for a set of `IncludeFile`s.

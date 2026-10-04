@@ -95,10 +95,10 @@ pub fn init(b: *std.Build, cfg: *const Config, deps: *const SharedDeps) !Ghostty
                 else => mkdir_step.addArgs(&.{ "mkdir", "-p" }),
             }
 
-            mkdir_step.addArg(b.fmt(
-                "{s}/share/{s}",
-                .{ b.install_path, terminfo_share_dir },
-            ));
+            mkdir_step.addDirectoryArg(.{ .relative = .{
+                .base = .install_prefix,
+                .sub_path = b.fmt("share/{s}", .{terminfo_share_dir}),
+            } });
 
             try steps.append(b.allocator, &mkdir_step.step);
 
@@ -108,7 +108,10 @@ pub fn init(b: *std.Build, cfg: *const Config, deps: *const SharedDeps) !Ghostty
             const copy_step = RunStep.create(b, "copy terminfo db");
             copy_step.addArgs(&.{ "cp", "-R" });
             copy_step.addFileArg(path);
-            copy_step.addArg(b.fmt("{s}/share", .{b.install_path}));
+            copy_step.addDirectoryArg(.{ .relative = .{
+                .base = .install_prefix,
+                .sub_path = "share",
+            } });
             copy_step.step.dependOn(&mkdir_step.step);
             try steps.append(b.allocator, &copy_step.step);
         }
@@ -267,22 +270,17 @@ fn addLinuxAppResources(
 
     const name = b.fmt("Ghostty{s}", .{
         switch (cfg.optimize) {
-            .Debug, .ReleaseSafe => " (Debug)",
-            .ReleaseFast, .ReleaseSmall => "",
+            .debug, .safe => " (Debug)",
+            .fast, .small => "",
         },
     });
 
     const app_id = b.fmt("com.mitchellh.ghostty{s}", .{
         switch (cfg.optimize) {
-            .Debug, .ReleaseSafe => "-debug",
-            .ReleaseFast, .ReleaseSmall => "",
+            .debug, .safe => "-debug",
+            .fast, .small => "",
         },
     });
-
-    const exe_abs_path = b.fmt(
-        "{s}/bin/ghostty",
-        .{b.install_prefix},
-    );
 
     // The templates that we will process. The templates are in
     // cmake format and will be processed and saved to the
@@ -352,16 +350,28 @@ fn addLinuxAppResources(
         }, .{
             .NAME = name,
             .APPID = app_id,
-            .GHOSTTY = exe_abs_path,
+            .GHOSTTY = "@GHOSTTY@",
         });
 
-        // Template output has a single header line we want to remove.
-        // We use `tail` to do it since its part of the POSIX standard.
-        const tail = b.addSystemCommand(&.{ "tail", "-n", "+2" });
-        tail.setStdIn(.{ .lazy_path = tpl.getOutputFile() });
+        // The installation path is resolved when the step runs.
+        const render = b.addSystemCommand(&.{ "awk", "-v" });
+        render.addPrefixedFileArg("ghostty=", .{ .relative = .{
+            .base = .install_bin,
+            .sub_path = "ghostty",
+        } });
+        render.addArg(
+            \\NR > 1 {
+            \\  while (i = index($0, "@GHOSTTY@")) {
+            \\    printf "%s%s", substr($0, 1, i-1), ghostty;
+            \\    $0 = substr($0, i+8);
+            \\  }
+            \\  print;
+            \\}
+        );
+        render.setStdIn(.{ .lazy_path = tpl.getOutputFile() });
 
         const copy = b.addInstallFile(
-            tail.captureStdOut(.{}),
+            render.captureStdOut(.{}),
             template[1],
         );
 

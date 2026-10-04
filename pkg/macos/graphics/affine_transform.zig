@@ -11,6 +11,25 @@ pub const AffineTransform = extern struct {
     ty: c.CGFloat,
 
     pub fn identity() AffineTransform {
-        return @bitCast(c.CGAffineTransformIdentity);
+        const matrix = c.CGAffineTransformIdentity;
+        return .{
+            .a = matrix.a,
+            .b = matrix.b,
+            .c = matrix.c,
+            .d = matrix.d,
+            .tx = matrix.tx,
+            .ty = matrix.ty,
+        };
+    }
+
+    pub fn toC(self: AffineTransform) c.CGAffineTransform {
+        return .{
+            .a = self.a,
+            .b = self.b,
+            .c = self.c,
+            .d = self.d,
+            .tx = self.tx,
+            .ty = self.ty,
+        };
     }
 };

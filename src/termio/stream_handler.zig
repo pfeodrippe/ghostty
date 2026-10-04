@@ -1141,11 +1141,11 @@ pub const StreamHandler = struct {
         const req = try alloc.create(apprt.ClipboardRequest.KittyRead);
         const mimes = try alloc.alloc([:0]const u8, mimes_len);
         for (mimes_buf[0..mimes_len], mimes) |src, *dst| {
-            dst.* = try alloc.dupeZ(u8, src);
+            dst.* = try alloc.dupeSentinel(u8, src, 0);
         }
         const id = try alloc.dupe(u8, meta.id);
         const pw_owned = try alloc.dupe(u8, pw);
-        const name_owned = try alloc.dupeZ(u8, meta.name);
+        const name_owned = try alloc.dupeSentinel(u8, meta.name, 0);
         req.* = .{
             // The arena must be copied in last so it tracks every
             // allocation above.
@@ -1360,12 +1360,12 @@ pub const StreamHandler = struct {
             committed.contents.len,
         );
         for (committed.contents, contents) |src, *dst| dst.* = .{
-            .mime = try alloc.dupeZ(u8, src.mime),
-            .data = try alloc.dupeZ(u8, src.data),
+            .mime = try alloc.dupeSentinel(u8, src.mime, 0),
+            .data = try alloc.dupeSentinel(u8, src.data, 0),
         };
         const id = try alloc.dupe(u8, committed.id);
         const pw_owned = try alloc.dupe(u8, pw);
-        const name_owned = try alloc.dupeZ(u8, committed.name);
+        const name_owned = try alloc.dupeSentinel(u8, committed.name, 0);
         req.* = .{
             // The arena must be copied in last so it tracks every
             // allocation above.
@@ -1511,9 +1511,12 @@ pub const StreamHandler = struct {
         }
 
         var host_buffer: [std.Io.net.HostName.max_len]u8 = undefined;
-        const host = uri.getHost(&host_buffer) catch |err| switch (err) {
-            error.UriMissingHost => {
-                log.warn("OSC 7 uri must contain a hostname: {}", .{err});
+        const host = std.Io.net.HostName.fromUri(uri, &host_buffer) catch |err| switch (err) {
+            error.UriMissingHost,
+            error.InvalidHostName,
+            error.NameTooLong,
+            => {
+                log.warn("OSC 7 uri must contain a valid hostname: {}", .{err});
                 return;
             },
         };
@@ -1537,9 +1540,10 @@ pub const StreamHandler = struct {
         // We need the raw path, which might require unescaping. We try to
         // avoid making any heap allocations by using the stack first.
         var arena_alloc: std.heap.ArenaAllocator = .init(self.alloc);
-        var stack_alloc = std.heap.stackFallback(1024, arena_alloc.allocator());
+        var stack_alloc_buffer: [1024]u8 = undefined;
+        var stack_alloc: std.heap.BufferFirstAllocator = .init(&stack_alloc_buffer, arena_alloc.allocator());
         defer arena_alloc.deinit();
-        const path = try uri.path.toRawMaybeAlloc(stack_alloc.get());
+        const path = try uri.path.toRawMaybeAlloc(stack_alloc.allocator());
 
         log.debug("terminal pwd: {s}", .{path});
         try self.terminal.setPwd(path);
@@ -1681,7 +1685,7 @@ pub const StreamHandler = struct {
                             },
                         });
                     }
-                    mask.* = .initEmpty();
+                    mask.* = .empty;
                 },
 
                 .reset_special => log.warn(
@@ -1734,7 +1738,7 @@ pub const StreamHandler = struct {
                             .dynamic => |dynamic| try response.writer.print(
                                 "\x1b]{d};rgb:{x:0>4}/{x:0>4}/{x:0>4}",
                                 .{
-                                    @intFromEnum(dynamic),
+                                    @backingInt(dynamic),
                                     @as(u16, color.r) * 257,
                                     @as(u16, color.g) * 257,
                                     @as(u16, color.b) * 257,
@@ -1756,7 +1760,7 @@ pub const StreamHandler = struct {
                             .dynamic => |dynamic| try response.writer.print(
                                 "\x1b]{d};rgb:{x:0>2}/{x:0>2}/{x:0>2}",
                                 .{
-                                    @intFromEnum(dynamic),
+                                    @backingInt(dynamic),
                                     @as(u16, color.r),
                                     @as(u16, color.g),
                                     @as(u16, color.b),

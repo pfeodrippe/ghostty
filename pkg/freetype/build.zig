@@ -44,7 +44,6 @@ pub fn build(b: *std.Build) !void {
         .link_system_libs = if (lib == .system) &.{"freetype2"} else &.{},
         .link_libs = if (lib == .static) &.{lib.static} else &.{},
         .include_paths = &.{b.path("")},
-        .default_init = true,
     });
 }
 

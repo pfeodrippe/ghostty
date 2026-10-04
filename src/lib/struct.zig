@@ -8,9 +8,8 @@ const Target = @import("target.zig").Target;
 /// When the target is `.c`, the struct is recreated with an `extern` layout,
 /// ensuring a stable, C-compatible memory layout.
 ///
-/// This handles packed structs by resolving zero alignments to the natural
-/// alignment of each field's type, since extern structs require explicit
-/// alignment. This means packed struct fields like `bool` will take up
+/// Packed fields use their natural alignment in the extern layout.
+/// This means packed struct fields like `bool` will take up
 /// their full size (1 byte) rather than being bit-packed.
 pub fn Struct(
     comptime target: Target,
@@ -20,21 +19,7 @@ pub fn Struct(
         .zig => Zig,
         .c => c: {
             const info = @typeInfo(Zig).@"struct";
-            var names: [info.fields.len][]const u8 = undefined;
-            var types: [info.fields.len]type = undefined;
-            var attrs: [info.fields.len]std.builtin.Type.StructField.Attributes = undefined;
-
-            for (info.fields, &names, &types, &attrs) |field, *name, *ty, *attr| {
-                name.* = field.name;
-                ty.* = field.type;
-                attr.* = .{
-                    .@"align" = field.alignment,
-                    .@"comptime" = field.is_comptime,
-                    .default_value_ptr = field.default_value_ptr,
-                };
-            }
-
-            break :c @Struct(.@"extern", null, &names, &types, &attrs);
+            break :c @Struct(.@"extern", null, info.field_names, info.field_types, info.field_attrs);
         },
     };
 }

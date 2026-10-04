@@ -354,7 +354,7 @@ else untouched: {
 /// List of pins, known as "tracked" pins. These are pins that are kept
 /// up to date automatically through page-modifying operations.
 const PinSet = std.AutoArrayHashMapUnmanaged(*Pin, void);
-const PinPool = std.heap.memory_pool.Managed(Pin);
+const PinPool = std.heap.MemoryPool(Pin);
 
 /// The pool of memory used for a pagelist. This can be shared between
 /// multiple pagelists but it is not threadsafe.
@@ -376,7 +376,7 @@ pub const MemoryPool = struct {
         var page_pool = try PagePool.initCapacity(gen_alloc, page_alloc, preheat);
         errdefer page_pool.deinit();
         var pin_pool = try PinPool.initCapacity(gen_alloc, pin_preheat);
-        errdefer pin_pool.deinit();
+        errdefer pin_pool.deinit(gen_alloc);
         return .{
             .alloc = gen_alloc,
             .nodes = node_pool,
@@ -388,13 +388,13 @@ pub const MemoryPool = struct {
     pub fn deinit(self: *MemoryPool) void {
         self.pages.deinit();
         self.nodes.deinit();
-        self.pins.deinit();
+        self.pins.deinit(self.alloc);
     }
 
     pub fn reset(self: *MemoryPool, mode: ResetMode) void {
         _ = self.pages.reset(mode);
         _ = self.nodes.reset(mode);
-        _ = self.pins.reset(mode);
+        _ = self.pins.reset(self.alloc, mode);
     }
 };
 
@@ -667,7 +667,7 @@ pub fn init(
 
     // We always track our viewport pin to ensure this is never an allocation
     try tw.check(.viewport_pin);
-    const viewport_pin = try pool.pins.create();
+    const viewport_pin = try pool.pins.create(pool.alloc);
     viewport_pin.* = .{ .node = page_list.first.? };
 
     try tw.check(.viewport_pin_track);
@@ -1112,7 +1112,7 @@ pub fn clone(
 
     // Create our viewport. In a clone, the viewport always goes
     // to the top.
-    const viewport_pin = try pool.pins.create();
+    const viewport_pin = try pool.pins.create(pool.alloc);
     var tracked_pins = try initTrackedPins(pool.alloc, viewport_pin);
     errdefer tracked_pins.deinit(pool.alloc);
 
@@ -1163,7 +1163,7 @@ pub fn clone(
                 if (p.node != chunk.node or
                     p.y < chunk.start or
                     p.y >= chunk.end) continue;
-                const new_p = try pool.pins.create();
+                const new_p = try pool.pins.create(pool.alloc);
                 new_p.* = p.*;
                 new_p.node = node;
                 new_p.y -= chunk.start;
@@ -5713,7 +5713,7 @@ pub fn trackPin(self: *PageList, p: Pin) Allocator.Error!*Pin {
     if (build_options.slow_runtime_safety) assert(self.pinIsValid(p));
 
     // Create our tracked pin
-    const tracked = try self.pool.pins.create();
+    const tracked = try self.pool.pins.create(self.pool.alloc);
     errdefer self.pool.pins.destroy(tracked);
     tracked.* = p;
 
@@ -7710,7 +7710,7 @@ pub const Builder = struct {
         };
 
         // Set our viewport up to the active
-        const viewport_pin = try self.pool.pins.create();
+        const viewport_pin = try self.pool.pins.create(self.pool.alloc);
         errdefer self.pool.pins.destroy(viewport_pin);
         viewport_pin.* = active_top;
 
@@ -16959,7 +16959,7 @@ test "PageList resize reflow exceeds hyperlink memory forcing capacity increase"
         const page = s.pages.first.?.page();
         const id = try page.insertHyperlink(.{
             .id = .{ .implicit = 0 },
-            .uri = "a" ** (pagepkg.string_bytes_default - 1),
+            .uri = (&@as([(pagepkg.string_bytes_default - 1):0]u8, @splat('a'))),
         });
         const rac = page.getRowAndCell(page.size.cols - 1, page.size.rows - 1);
         rac.row.wrap = true;
@@ -16983,7 +16983,7 @@ test "PageList resize reflow exceeds hyperlink memory forcing capacity increase"
         const page = s.pages.last.?.page();
         const id = try page.insertHyperlink(.{
             .id = .{ .implicit = 1 },
-            .uri = "a" ** (pagepkg.string_bytes_default - 1),
+            .uri = (&@as([(pagepkg.string_bytes_default - 1):0]u8, @splat('a'))),
         });
         const rac = page.getRowAndCell(0, 0);
         rac.row.wrap_continuation = true;
@@ -17055,9 +17055,9 @@ test "PageList resize reflow hyperlink dupe string alloc chunk rounding" {
     //  …B | <- B is hyperlinked with a 33-byte URI and 31-byte ID.
     //  +--+
 
-    const uri_a = "a" ** (pagepkg.string_bytes_default - 64);
-    const uri_b = "b" ** 33;
-    const id_b = "i" ** 31;
+    const uri_a = (&@as([(pagepkg.string_bytes_default - 64):0]u8, @splat('a')));
+    const uri_b = (&@as([33:0]u8, @splat('b')));
+    const id_b = (&@as([31:0]u8, @splat('i')));
 
     // Hyperlink A in the bottom right of the first page. Mark the final
     // row as wrapped.

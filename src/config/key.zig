@@ -5,16 +5,16 @@ const Config = @import("Config.zig");
 /// when paired with diff to determine what fields have changed in a config,
 /// amongst other things.
 pub const Key = key: {
-    const field_infos = std.meta.fields(Config);
+    const field_infos = @typeInfo(Config).@"struct".field_names;
     var names: [field_infos.len][]const u8 = undefined;
     var raw_values: [field_infos.len]comptime_int = undefined;
     var i: usize = 0;
     for (field_infos, &names, &raw_values) |field, *name, *raw| {
         // Ignore fields starting with "_" since they're internal and
         // not copied ever.
-        if (field.name[0] == '_') continue;
+        if (field[0] == '_') continue;
 
-        name.* = field.name;
+        name.* = field;
         raw.* = i;
         i += 1;
     }
@@ -33,9 +33,9 @@ pub fn Value(comptime key: Key) type {
     const field = comptime field: {
         @setEvalBranchQuota(100_000);
 
-        const fields = std.meta.fields(Config);
+        const fields = @typeInfo(Config).@"struct".field_names;
         for (fields) |field| {
-            if (@field(Key, field.name) == key) {
+            if (@field(Key, field) == key) {
                 break :field field;
             }
         }
@@ -43,7 +43,7 @@ pub fn Value(comptime key: Key) type {
         unreachable;
     };
 
-    return field.type;
+    return @FieldType(Config, field);
 }
 
 test "Value" {

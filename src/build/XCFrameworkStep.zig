@@ -13,7 +13,7 @@ pub const Options = struct {
     name: []const u8,
 
     /// The path to write the framework
-    out_path: []const u8,
+    out_path: LazyPath,
 
     /// The libraries to bundle
     libraries: []const Library,
@@ -41,7 +41,8 @@ pub fn create(b: *std.Build, opts: Options) *XCFrameworkStep {
     const run_delete = run: {
         const run = RunStep.create(b, b.fmt("xcframework delete {s}", .{opts.name}));
         run.has_side_effects = true;
-        run.addArgs(&.{ "rm", "-rf", opts.out_path });
+        run.addArgs(&.{ "rm", "-rf" });
+        run.addDirectoryArg(opts.out_path);
         break :run run;
     };
 
@@ -61,7 +62,7 @@ pub fn create(b: *std.Build, opts: Options) *XCFrameworkStep {
             }
         }
         run.addArg("-output");
-        run.addArg(opts.out_path);
+        run.addDirectoryArg(opts.out_path);
         run.expectExitCode(0);
         _ = run.captureStdOut(.{});
         _ = run.captureStdErr(.{});

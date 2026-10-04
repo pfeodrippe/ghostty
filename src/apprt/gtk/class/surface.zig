@@ -753,7 +753,7 @@ pub const Surface = extern struct {
         priv.overrides = .{
             .command = if (overrides.command) |c| c.clone(alloc) catch null else null,
             .shell_integration = overrides.shell_integration,
-            .working_directory = if (overrides.working_directory) |wd| alloc.dupeZ(u8, wd) catch null else null,
+            .working_directory = if (overrides.working_directory) |wd| alloc.dupeSentinel(u8, wd, 0) catch null else null,
         };
         return self;
     }
@@ -803,7 +803,7 @@ pub const Surface = extern struct {
             // Setup our cwd if configured to inherit
             if (apprt.surface.shouldInheritWorkingDirectory(context, config_obj.get())) {
                 if (parent.rt_surface.surface.getPwd()) |pwd| {
-                    priv.pwd = glib.ext.dupeZ(u8, pwd);
+                    priv.pwd = glib.ext.dupeSentinel(u8, pwd, 0);
                     self.as(gobject.Object).notifyByPspec(properties.pwd.impl.param_spec);
                 }
             }
@@ -981,7 +981,7 @@ pub const Surface = extern struct {
         switch (value) {
             .activate => |name| {
                 // Duplicate the name string and push onto stack
-                const duped = try alloc.dupeZ(u8, name);
+                const duped = try alloc.dupeSentinel(u8, name, 0);
                 errdefer alloc.free(duped);
                 try priv.key_tables.append(alloc, duped);
             },
@@ -2095,7 +2095,7 @@ pub const Surface = extern struct {
         const priv = self.private();
         if (priv.title) |v| glib.free(@ptrCast(@constCast(v)));
         priv.title = null;
-        if (title) |v| priv.title = glib.ext.dupeZ(u8, v);
+        if (title) |v| priv.title = glib.ext.dupeSentinel(u8, v, 0);
         self.as(gobject.Object).notifyByPspec(properties.title.impl.param_spec);
     }
 
@@ -2105,7 +2105,7 @@ pub const Surface = extern struct {
         const priv = self.private();
         if (priv.title_override) |v| glib.free(@ptrCast(@constCast(v)));
         priv.title_override = null;
-        if (title) |v| priv.title_override = glib.ext.dupeZ(u8, v);
+        if (title) |v| priv.title_override = glib.ext.dupeSentinel(u8, v, 0);
         self.as(gobject.Object).notifyByPspec(properties.@"title-override".impl.param_spec);
     }
 
@@ -2119,7 +2119,7 @@ pub const Surface = extern struct {
         const priv = self.private();
         if (priv.pwd) |v| glib.free(@ptrCast(@constCast(v)));
         priv.pwd = null;
-        if (pwd) |v| priv.pwd = glib.ext.dupeZ(u8, v);
+        if (pwd) |v| priv.pwd = glib.ext.dupeSentinel(u8, v, 0);
         self.as(gobject.Object).notifyByPspec(properties.pwd.impl.param_spec);
     }
 
@@ -2272,7 +2272,7 @@ pub const Surface = extern struct {
         const priv = self.private();
         if (priv.mouse_hover_url) |v| glib.free(@ptrCast(@constCast(v)));
         priv.mouse_hover_url = null;
-        if (url) |v| priv.mouse_hover_url = glib.ext.dupeZ(u8, v);
+        if (url) |v| priv.mouse_hover_url = glib.ext.dupeSentinel(u8, v, 0);
         self.as(gobject.Object).notifyByPspec(properties.@"mouse-hover-url".impl.param_spec);
     }
 
@@ -3545,13 +3545,14 @@ pub const Surface = extern struct {
         var buf: [32]u8 = undefined;
         priv.resize_overlay.setLabel(text: {
             const grid_size = surface.size.grid();
-            break :text std.fmt.bufPrintZ(
+            break :text std.mem.printSentinel(
                 &buf,
                 "{d} x {d}",
                 .{
                     grid_size.columns,
                     grid_size.rows,
                 },
+                0,
             ) catch |err| err: {
                 log.warn("unable to format text: {}", .{err});
                 break :err "";

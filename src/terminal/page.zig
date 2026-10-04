@@ -371,7 +371,7 @@ pub const Page = struct {
     /// disabled or the target is freestanding. This uses the libc allocator.
     pub inline fn assertIntegrity(self: *const Page) void {
         if (comptime build_options.slow_runtime_safety and builtin.os.tag != .freestanding) {
-            var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+            var debug_allocator: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
             defer _ = debug_allocator.deinit();
             const alloc = debug_allocator.allocator();
             self.verifyIntegrity(alloc) catch |err| {
@@ -729,7 +729,7 @@ pub const Page = struct {
         comptime assert(size.HyperlinkCountInt == size.CellCountInt);
 
         // Accumulators
-        var id_set: CellCountSet = .initEmpty();
+        var id_set: CellCountSet = .empty;
         var grapheme_bytes: usize = 0;
         var string_bytes: usize = 0;
 
@@ -754,7 +754,7 @@ pub const Page = struct {
         // Second pass: count hyperlinks and string bytes
         // We count both unique hyperlinks (for hyperlink_set) and total
         // hyperlink cells (for hyperlink_map capacity).
-        id_set = .initEmpty();
+        id_set = .empty;
         var hyperlink_cells: usize = 0;
         for (rows) |*row| {
             const cells = row.cells.ptr(self.memory)[0..self.size.cols];
@@ -2416,7 +2416,7 @@ fn fieldMask(
         }
 
         // The type that fits all the bits we need to set.
-        const Ones = std.meta.Int(.unsigned, @bitSizeOf(Field));
+        const Ones = @Int(.unsigned, @bitSizeOf(Field));
 
         // Mask out the ones
         mask |= @as(Int, std.math.maxInt(Ones)) << offset;
@@ -2581,7 +2581,7 @@ pub fn Mask(
                 return group_len;
             }
 
-            const ok_bits: std.meta.Int(
+            const ok_bits: @Int(
                 .unsigned,
                 group_len,
             ) = @bitCast(ok);
@@ -2765,8 +2765,9 @@ test "Page.layout can take a maxed capacity" {
     // overflow. This simplifies some of our handling downstream of the
     // call (relevant to: https://github.com/ghostty-org/ghostty/issues/10258)
     var cap: Capacity = undefined;
-    inline for (@typeInfo(Capacity).@"struct".fields) |field| {
-        @field(cap, field.name) = std.math.maxInt(field.type);
+    const info = @typeInfo(Capacity).@"struct";
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        @field(cap, field_name) = std.math.maxInt(field_type);
     }
 
     // Note that a max capacity will exceed our max_page_size so we

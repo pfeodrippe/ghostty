@@ -86,10 +86,10 @@ fn buildLib(b: *std.Build, options: anytype) !*std.Build.Step.Compile {
             .HAVE_SYS_TYPES_H = true,
             .HAVE_UNISTD_H = !is_windows,
             .HAVE_INTTYPES_H = true,
-            .SIZEOF_INT = t.cTypeByteSize(.int),
-            .SIZEOF_LONG = t.cTypeByteSize(.long),
-            .SIZEOF_LONG_LONG = t.cTypeByteSize(.longlong),
-            .SIZEOF_VOIDP = t.ptrBitWidth() / t.cTypeBitSize(.char),
+            .SIZEOF_INT = t.cTypeByteSize(.int).?,
+            .SIZEOF_LONG = t.cTypeByteSize(.long).?,
+            .SIZEOF_LONG_LONG = t.cTypeByteSize(.longlong).?,
+            .SIZEOF_VOIDP = t.ptrBitWidth() / t.cTypeBitSize(.char).?,
         }));
 
         var flags: std.ArrayList([]const u8) = .empty;

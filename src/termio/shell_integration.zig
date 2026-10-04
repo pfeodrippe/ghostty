@@ -96,7 +96,7 @@ test "force shell" {
     defer env.deinit();
 
     inline for (@typeInfo(Shell).@"enum".fields) |field| {
-        const shell = @field(Shell, field.name);
+        const shell = @field(Shell, field);
 
         var res: TmpResourcesDir = try .init(shell);
         defer res.deinit();
@@ -191,10 +191,10 @@ pub fn setupFeatures(
     features: config.ShellIntegrationFeatures,
     cursor_blink: bool,
 ) !void {
-    const fields = @typeInfo(@TypeOf(features)).@"struct".fields;
+    const fields = @typeInfo(@TypeOf(features)).@"struct".field_names;
     const capacity: usize = capacity: {
         comptime var n: usize = fields.len - 1; // commas
-        inline for (fields) |field| n += field.name.len;
+        inline for (fields) |field| n += field.len;
         n += ":steady".len; // cursor value
         break :capacity n;
     };
@@ -206,7 +206,7 @@ pub fn setupFeatures(
     // done at comptime so it has no runtime cost
     const fields_sorted: [fields.len][]const u8 = comptime fields: {
         var fields_sorted: [fields.len][]const u8 = undefined;
-        for (fields, 0..) |field, i| fields_sorted[i] = field.name;
+        for (fields, 0..) |field, i| fields_sorted[i] = field;
         std.mem.sortUnstable(
             []const u8,
             &fields_sorted,
@@ -302,8 +302,9 @@ fn setupBash(
     resource_dir: []const u8,
     env: *EnvMap,
 ) !?config.Command {
-    var stack_fallback = std.heap.stackFallback(4096, alloc);
-    var cmd = internal_os.shell.ShellCommandBuilder.init(stack_fallback.get());
+    var stack_fallback_buffer: [4096]u8 = undefined;
+    var stack_fallback: std.heap.BufferFirstAllocator = .init(&stack_fallback_buffer, alloc);
+    var cmd = internal_os.shell.ShellCommandBuilder.init(stack_fallback.allocator());
     defer cmd.deinit();
 
     // Iterator that yields each argument in the original command line.
@@ -407,7 +408,7 @@ fn setupBash(
     }
 
     // Return a copy of our modified command line to use as the shell command.
-    return .{ .shell = try alloc.dupeZ(u8, cmd.buffer.written()) };
+    return .{ .shell = try alloc.dupeSentinel(u8, cmd.buffer.written(), 0) };
 }
 
 test "bash" {
@@ -656,8 +657,9 @@ fn setupXdgDataDirs(
     // 4K is a reasonable size for this for most cases. However, env
     // vars can be significantly larger so if we have to we fall
     // back to a heap allocated value.
-    var stack_alloc_state = std.heap.stackFallback(4096, alloc);
-    const stack_alloc = stack_alloc_state.get();
+    var stack_alloc_state_buffer: [4096]u8 = undefined;
+    var stack_alloc_state: std.heap.BufferFirstAllocator = .init(&stack_alloc_state_buffer, alloc);
+    const stack_alloc = stack_alloc_state.allocator();
 
     // If no XDG_DATA_DIRS set use the default value as specified.
     // This ensures that the default directories aren't lost by setting
@@ -787,8 +789,10 @@ fn setupNushell(
     // of the later checks abort the rest of our automatic integration.
     if (!try setupXdgDataDirs(alloc, resource_dir, env)) return null;
 
-    var stack_fallback = std.heap.stackFallback(4096, alloc);
-    var cmd = internal_os.shell.ShellCommandBuilder.init(stack_fallback.get());
+    var stack_fallback_buffer: [4096]u8 = undefined;
+
+    var stack_fallback: std.heap.BufferFirstAllocator = .init(&stack_fallback_buffer, alloc);
+    var cmd = internal_os.shell.ShellCommandBuilder.init(stack_fallback.allocator());
     defer cmd.deinit();
 
     // Iterator that yields each argument in the original command line.
@@ -839,7 +843,7 @@ fn setupNushell(
     }
 
     // Return a copy of our modified command line to use as the shell command.
-    return .{ .shell = try alloc.dupeZ(u8, cmd.buffer.written()) };
+    return .{ .shell = try alloc.dupeSentinel(u8, cmd.buffer.written(), 0) };
 }
 
 test "nushell" {

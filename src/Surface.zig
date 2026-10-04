@@ -1039,7 +1039,7 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
                 .color_change,
                 .{
                     .kind = switch (change.target) {
-                        .palette => |v| @enumFromInt(v),
+                        .palette => |v| @fromBackingInt(@intCast(v)),
                         .dynamic => |dyn| switch (dyn) {
                             .foreground => .foreground,
                             .background => .background,
@@ -1091,9 +1091,11 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
         .pwd_change => |w| {
             defer w.deinit();
 
-            var stack = std.heap.stackFallback(256, self.alloc);
-            const alloc = stack.get();
-            const str = try alloc.dupeZ(u8, w.slice());
+            var stack_buffer: [256]u8 = undefined;
+
+            var stack: std.heap.BufferFirstAllocator = .init(&stack_buffer, self.alloc);
+            const alloc = stack.allocator();
+            const str = try alloc.dupeSentinel(u8, w.slice(), 0);
             defer alloc.free(str);
 
             _ = try self.rt_app.performAction(
@@ -1634,7 +1636,7 @@ fn mouseRefreshLinks(
         // highlight links until the mouse is unclicked. This follows
         // standard macOS and Linux behavior where a click and drag cancels
         // mouse actions.
-        const left_idx = @intFromEnum(input.MouseButton.left);
+        const left_idx = @backingInt(input.MouseButton.left);
         if (self.mouse.click_state[left_idx] == .press) click: {
             const pin = self.mouse.activeLeftClickPin(&self.io.terminal.screens) orelse break :click;
             const click_pt = self.io.terminal.screens.active.pages.pointFromPin(
@@ -1669,7 +1671,7 @@ fn mouseRefreshLinks(
                     break :link .{ null, false };
                 };
                 break :link .{
-                    .{ .url = try alloc.dupeZ(u8, uri) },
+                    .{ .url = try alloc.dupeSentinel(u8, uri, 0) },
                     self.config.link_previews != .false,
                 };
             },
@@ -3894,7 +3896,7 @@ pub fn mouseButtonCallback(
     }
 
     // Always record our latest mouse state
-    self.mouse.click_state[@intCast(@intFromEnum(button))] = action;
+    self.mouse.click_state[@intCast(@backingInt(button))] = action;
 
     // Always show the mouse again if it is hidden
     if (self.mouse.hidden) self.showMouse();
@@ -4593,7 +4595,7 @@ pub fn mousePressureCallback(
     // button is already down. Treat it as the platform text-selection
     // affordance: select the pressed word, then consume the active gesture so
     // further cursor motion doesn't drag the selection.
-    const left_idx = @intFromEnum(input.MouseButton.left);
+    const left_idx = @backingInt(input.MouseButton.left);
     if (self.mouse.click_state[left_idx] == .press and
         stage == .deep)
     select: {
@@ -4747,7 +4749,7 @@ pub fn cursorPosCallback(
         // since the spec (afaict) does not say...
         const button: ?input.MouseButton = button: for (self.mouse.click_state, 0..) |state, i| {
             if (state == .press)
-                break :button @enumFromInt(i);
+                break :button @fromBackingInt(@intCast(i));
         } else null;
 
         self.mouseReport(button, .motion, self.mouse.mods, pos);
@@ -4758,7 +4760,7 @@ pub fn cursorPosCallback(
     }
 
     // Handle cursor position for text selection
-    if (self.mouse.click_state[@intFromEnum(input.MouseButton.left)] == .press) select: {
+    if (self.mouse.click_state[@backingInt(input.MouseButton.left)] == .press) select: {
         // Left click pressed but count zero can happen if mouse reporting is on.
         // In this scenario, we mark the click state because we need that to
         // properly make some mouse reports, but we don't keep track of the
@@ -4956,8 +4958,9 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
         },
 
         .text => |data| {
-            var stack = std.heap.stackFallback(256, self.alloc);
-            const alloc = stack.get();
+            var stack_buffer: [256]u8 = undefined;
+            var stack: std.heap.BufferFirstAllocator = .init(&stack_buffer, self.alloc);
+            const alloc = stack.allocator();
             const buf = try alloc.alloc(u8, data.len);
             defer alloc.free(buf);
             const text = configpkg.string.parse(buf, data) catch |err| {
@@ -5168,7 +5171,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
                             log.warn("failed to get URI for OSC8 hyperlink", .{});
                             return false;
                         };
-                        break :url_text try self.alloc.dupeZ(u8, uri);
+                        break :url_text try self.alloc.dupeSentinel(u8, uri, 0);
                     },
                 };
                 defer self.alloc.free(url_text);
@@ -5273,7 +5276,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
         ),
 
         .set_surface_title => |v| {
-            const title = try self.alloc.dupeZ(u8, v);
+            const title = try self.alloc.dupeSentinel(u8, v, 0);
             defer self.alloc.free(title);
             return try self.rt_app.performAction(
                 .{ .surface = self },
@@ -5283,7 +5286,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
         },
 
         .set_tab_title => |v| {
-            const title = try self.alloc.dupeZ(u8, v);
+            const title = try self.alloc.dupeSentinel(u8, v, 0);
             defer self.alloc.free(title);
             return try self.rt_app.performAction(
                 .{ .surface = self },
@@ -5293,7 +5296,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
         },
 
         .set_window_title => |v| {
-            const title = try self.alloc.dupeZ(u8, v);
+            const title = try self.alloc.dupeSentinel(u8, v, 0);
             defer self.alloc.free(title);
             return try self.rt_app.performAction(
                 .{ .surface = self },
@@ -5430,7 +5433,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
                 .previous_tab => .previous,
                 .next_tab => .next,
                 .last_tab => .last,
-                .goto_tab => @enumFromInt(v),
+                .goto_tab => @fromBackingInt(@intCast(v)),
                 else => comptime unreachable,
             },
         ),
@@ -5907,7 +5910,7 @@ fn writeScreenFile(
 
     switch (write_screen.action) {
         .copy => {
-            const pathZ = try self.alloc.dupeZ(u8, path);
+            const pathZ = try self.alloc.dupeSentinel(u8, path, 0);
             defer self.alloc.free(pathZ);
             try self.rt_surface.setClipboard(.standard, &.{.{
                 .mime = "text/plain",
@@ -5998,9 +6001,10 @@ pub fn completeClipboardRequest(
             // The write API wants sentinel-terminated data; the write
             // text round-tripped through the apprt confirmation flow as
             // a plain representation.
-            const data = try self.alloc.dupeZ(
+            const data = try self.alloc.dupeSentinel(
                 u8,
                 clipboardTextContent(complete.contents) orelse "",
+                0,
             );
             defer self.alloc.free(data);
             try self.rt_surface.setClipboard(clipboard, &.{.{

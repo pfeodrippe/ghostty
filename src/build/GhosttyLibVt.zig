@@ -451,15 +451,18 @@ fn initLibApple(
         "/bin/ln",
         "-sf",
         real_name,
-        b.getInstallPath(.lib, soname),
     });
+    soname_install.addFileArg(.{ .relative = .{ .base = .install_lib, .sub_path = soname } });
     soname_install.step.dependOn(&artifact_install.step);
     const unversioned_install = b.addSystemCommand(&.{
         "/bin/ln",
         "-sf",
         soname,
-        b.getInstallPath(.lib, "libghostty-vt.dylib"),
     });
+    unversioned_install.addFileArg(.{ .relative = .{
+        .base = .install_lib,
+        .sub_path = "libghostty-vt.dylib",
+    } });
     unversioned_install.step.dependOn(&soname_install.step);
 
     // The native link is a Run step rather than a Compile step, so install the
@@ -517,7 +520,7 @@ fn pkgConfigFiles(
 
     return .{
         .shared = wf.add("libghostty-vt.pc", b.fmt(
-            \\prefix={s}
+            \\prefix=${{pcfiledir}}/../..
             \\includedir=${{prefix}}/include
             \\libdir=${{prefix}}/lib
             \\
@@ -529,9 +532,9 @@ fn pkgConfigFiles(
             \\Libs: -L${{libdir}} -lghostty-vt
             \\Libs.private: {s}
             \\Requires.private: {s}
-        , .{ b.install_prefix, zig.version, libs_private, requires_private })),
+        , .{ zig.version, libs_private, requires_private })),
         .static = wf.add("libghostty-vt-static.pc", b.fmt(
-            \\prefix={s}
+            \\prefix=${{pcfiledir}}/../..
             \\includedir=${{prefix}}/include
             \\libdir=${{prefix}}/lib
             \\
@@ -544,7 +547,6 @@ fn pkgConfigFiles(
             \\Libs.private: {s}
             \\Requires.private: {s}
         , .{
-            b.install_prefix,
             zig.version,
             staticLibraryName(os_tag),
             libs_private,
@@ -612,7 +614,10 @@ pub fn xcframework(
 
     return XCFrameworkStep.create(b, .{
         .name = "ghostty-vt",
-        .out_path = b.pathJoin(&.{ b.install_prefix, "lib/ghostty-vt.xcframework" }),
+        .out_path = .{ .relative = .{
+            .base = .install_lib,
+            .sub_path = "ghostty-vt.xcframework",
+        } },
         .libraries = libraries[0..lib_count],
     });
 }

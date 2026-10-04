@@ -197,7 +197,6 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
         .link_libs = &.{lib},
-        .default_init = true,
         .extra_args = define_flags.items,
     });
 

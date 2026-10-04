@@ -101,11 +101,11 @@ fn initTable() [table_len]u16 {
 test {
     const testing = std.testing;
     const info = @typeInfo(Charset).@"enum";
-    inline for (info.fields) |field| {
+    inline for (info.field_names) |name| {
         // utf8 has no table
-        if (@field(Charset, field.name) == .utf8) continue;
+        if (@field(Charset, name) == .utf8) continue;
 
-        const tbl = table(@field(Charset, field.name));
+        const tbl = table(@field(Charset, name));
 
         // Yes, I could use `table_len` here, but I want to explicitly use a
         // hardcoded constant so that if there are miscompilations or a comptime

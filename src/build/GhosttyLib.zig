@@ -255,7 +255,7 @@ fn pkgConfigFiles(
 
     return .{
         .shared = wf.add("ghostty-internal.pc", b.fmt(
-            \\prefix={s}
+            \\prefix=${{pcfiledir}}/../..
             \\includedir=${{prefix}}/include
             \\libdir=${{prefix}}/lib
             \\
@@ -267,9 +267,9 @@ fn pkgConfigFiles(
             \\Libs: ${{libdir}}/{s}
             \\Libs.private:
             \\Requires.private:
-        , .{ b.install_prefix, deps.config.version, sharedLibraryName(os_tag) })),
+        , .{ deps.config.version, sharedLibraryName(os_tag) })),
         .static = wf.add("ghostty-internal-static.pc", b.fmt(
-            \\prefix={s}
+            \\prefix=${{pcfiledir}}/../..
             \\includedir=${{prefix}}/include
             \\libdir=${{prefix}}/lib
             \\
@@ -281,7 +281,7 @@ fn pkgConfigFiles(
             \\Libs: ${{libdir}}/{s}
             \\Libs.private:
             \\Requires.private:
-        , .{ b.install_prefix, deps.config.version, staticLibraryName(os_tag) })),
+        , .{ deps.config.version, staticLibraryName(os_tag) })),
     };
 }
 

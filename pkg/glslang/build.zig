@@ -24,7 +24,6 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
         .link_libs = &.{lib},
-        .default_init = true,
     });
 
     if (target.query.isNative()) {
@@ -44,7 +43,7 @@ pub fn build(b: *std.Build) !void {
 fn buildGlslang(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
 ) !*std.Build.Step.Compile {
     const upstream_ = b.lazyDependency("glslang", .{});
     const lib = b.addLibrary(.{

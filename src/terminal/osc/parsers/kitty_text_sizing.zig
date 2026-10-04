@@ -258,7 +258,14 @@ test "OSC 66: overlong UTF-8" {
 
     var p: Parser = .init(null);
 
-    const input = "66;;" ++ "bobr" ** 1025;
+    const input = "66;;" ++ &(comptime repeated: {
+        @setEvalBranchQuota(2048);
+        var bytes: ["bobr".len * (1025):0]u8 = undefined;
+        for (0..(1025)) |i| {
+            @memcpy(bytes[i * "bobr".len ..][0.."bobr".len], "bobr");
+        }
+        break :repeated bytes;
+    });
     for (input) |ch| p.next(ch);
 
     try testing.expect(p.end('\x1b') == null);

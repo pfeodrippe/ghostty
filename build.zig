@@ -25,9 +25,9 @@ pub fn build(b: *std.Build) !void {
     // If we have a VERSION file (present in source tarballs) then we
     // use that as the version source of truth. Otherwise we fall back
     // to what is in the build.zig.zon.
-    const file_version: ?[]const u8 = if (b.build_root.handle.readFileAlloc(
+    const file_version: ?[]const u8 = if (std.Io.Dir.cwd().readFileAlloc(
         b.graph.io,
-        "VERSION",
+        try b.root.joinString(b.allocator, "VERSION"),
         b.allocator,
         .limited(128),
     )) |content| std.mem.trim(
@@ -151,10 +151,9 @@ pub fn build(b: *std.Build) !void {
         type_schema_test.addFileArg(shared.output);
         test_lib_vt_schema_step.dependOn(&type_schema_test.step);
     } else {
-        try test_lib_vt_schema_step.addError(
+        test_lib_vt_schema_step.dependOn(&b.addFail(
             "cannot execute the ABI manifest for a native freestanding target",
-            .{},
-        );
+        ).step);
     }
 
     // libghostty-vt static lib
@@ -280,17 +279,17 @@ pub fn build(b: *std.Build) !void {
     // Run step
     run: {
         if (config.app_runtime != .none) {
-            const run_cmd = b.addRunArtifact(exe.exe);
-            if (b.args) |args| run_cmd.addArgs(args);
-
             // Set the proper resources dir so things like shell integration
             // work correctly. If we're running `zig build run` in Ghostty,
             // this also ensures it overwrites the release one with our debug
             // build.
-            run_cmd.setEnvironmentVariable(
-                "GHOSTTY_RESOURCES_DIR",
-                b.getInstallPath(.prefix, "share/ghostty"),
-            );
+            const run_cmd = b.addSystemCommand(&.{"env"});
+            run_cmd.addPrefixedDirectoryArg("GHOSTTY_RESOURCES_DIR=", .{ .relative = .{
+                .base = .install_prefix,
+                .sub_path = "share/ghostty",
+            } });
+            run_cmd.addArtifactArg(exe.exe);
+            run_cmd.addPassthruArgs();
 
             run_step.dependOn(&run_cmd.step);
             break :run;
@@ -348,11 +347,11 @@ pub fn build(b: *std.Build) !void {
             "--leak-check=full",
             "--error-exitcode=1",
             "--num-callers=50",
-            b.fmt("--suppressions={s}", .{b.pathFromRoot("valgrind.supp")}),
             "--gen-suppressions=all",
         });
+        run_cmd.addPrefixedFileArg("--suppressions=", b.path("valgrind.supp"));
         run_cmd.addArtifactArg(valgrind_exe.exe);
-        if (b.args) |args| run_cmd.addArgs(args);
+        run_cmd.addPassthruArgs();
         run_valgrind_step.dependOn(&run_cmd.step);
     }
 
@@ -415,9 +414,9 @@ pub fn build(b: *std.Build) !void {
             "--leak-check=full",
             "--error-exitcode=1",
             "--num-callers=50",
-            b.fmt("--suppressions={s}", .{b.pathFromRoot("valgrind.supp")}),
             "--gen-suppressions=all",
         });
+        valgrind_run.addPrefixedFileArg("--suppressions=", b.path("valgrind.supp"));
         valgrind_run.addArtifactArg(test_exe);
         config.addPatchElf(test_exe, &valgrind_run.step);
         test_valgrind_step.dependOn(&valgrind_run.step);
@@ -428,7 +427,7 @@ pub fn build(b: *std.Build) !void {
     if (i18n) |v| {
         translations_step.dependOn(v.update_step);
     } else {
-        try translations_step.addError("cannot update translations when i18n is disabled", .{});
+        translations_step.dependOn(&b.addFail("cannot update translations when i18n is disabled").step);
     }
 }
 

@@ -209,7 +209,13 @@ test "decode no escape" {
 
     // TODO: many more test cases
     {
-        const str = "hello" ** 128;
+        const str = &(comptime repeated: {
+            var bytes: ["hello".len * (128):0]u8 = undefined;
+            for (0..(128)) |i| {
+                @memcpy(bytes[i * "hello".len ..][0.."hello".len], "hello");
+            }
+            break :repeated bytes;
+        });
         try testing.expectEqual(DecodeResult{
             .consumed = str.len,
             .decoded = str.len,
@@ -224,8 +230,20 @@ test "decode ASCII to escape" {
 
     // TODO: many more test cases
     {
-        const prefix = "hello" ** 64;
-        const str = prefix ++ "\x1b" ++ ("world" ** 64);
+        const prefix = &(comptime repeated: {
+            var bytes: ["hello".len * (64):0]u8 = undefined;
+            for (0..(64)) |i| {
+                @memcpy(bytes[i * "hello".len ..][0.."hello".len], "hello");
+            }
+            break :repeated bytes;
+        });
+        const str = prefix ++ "\x1b" ++ (&(comptime repeated: {
+            var bytes: ["world".len * (64):0]u8 = undefined;
+            for (0..(64)) |i| {
+                @memcpy(bytes[i * "world".len ..][0.."world".len], "world");
+            }
+            break :repeated bytes;
+        }));
         try testing.expectEqual(DecodeResult{
             .consumed = prefix.len,
             .decoded = prefix.len,

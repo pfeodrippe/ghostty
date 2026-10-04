@@ -21,9 +21,7 @@ pub const Cache = struct {
             system_include: []const u8,
             library: []const u8,
         },
-        cross: struct {
-            libc: std.Build.LazyPath,
-        },
+        cross,
     };
 
     var map: std.AutoHashMapUnmanaged(Key, ?Value) = .{};
@@ -52,7 +50,7 @@ pub fn pathsForTarget(b: *std.Build, target: std.Target) !Cache.Value {
             // Detect our SDK using the "findNative" Zig stdlib function.
             // This is really important because it forces using `xcrun` to
             // find the SDK path.
-            var libc = std.zig.LibCInstallation.findNative(
+            const libc = std.zig.LibCInstallation.findNative(
                 b.allocator,
                 b.graph.io,
                 .{
@@ -61,20 +59,6 @@ pub fn pathsForTarget(b: *std.Build, target: std.Target) !Cache.Value {
                     .verbose = false,
                 },
             ) catch break :darwin;
-
-            // Xcode 27's math.h requests infinity and NaN definitions from
-            // Clang's float.h using the __need_infinity_nan protocol. Zig
-            // 0.16's bundled Clang resource headers predate that protocol, so
-            // compiling Zig's bundled libc++ against the new SDK fails.
-            //
-            // Put our compatibility include directory between Zig's resource
-            // headers and the selected SDK headers. Its math.h forwards to the
-            // SDK with #include_next, then supplies the definitions missing
-            // from Zig's float.h. This can be removed once Zig's bundled Clang
-            // headers implement __need_infinity_nan.
-            libc.include_dir = b.dependency("apple_sdk", .{})
-                .path("include")
-                .getPath(b);
 
             // Render the file compatible with the `--libc` Zig flag.
             var stream: std.Io.Writer.Allocating = .init(b.allocator);
@@ -126,24 +110,8 @@ pub fn pathsForTarget(b: *std.Build, target: std.Target) !Cache.Value {
             break :init;
         }
 
-        // Fall back to Zig's bundled Darwin headers for libc resolution.
-        const zig_lib_path = b.graph.zig_lib_directory.path.?;
-        const include_dir = b.pathJoin(&.{
-            zig_lib_path, "libc", "include", "any-darwin-any",
-        });
-
-        const wf = b.addWriteFiles();
-        const path = wf.add("libc.txt", b.fmt(
-            \\include_dir={s}
-            \\sys_include_dir={s}
-            \\crt_dir=
-            \\msvc_lib_dir=
-            \\kernel32_lib_dir=
-            \\gcc_dir=
-            \\
-        , .{ include_dir, include_dir }));
-
-        gop.value_ptr.* = .{ .cross = .{ .libc = path } };
+        // Zig selects its bundled macOS headers for cross compilation.
+        gop.value_ptr.* = .cross;
     }
 
     return gop.value_ptr.* orelse return switch (target.os.tag) {
@@ -197,12 +165,10 @@ pub fn addPaths(
 
             // This is only necessary until this bug is fixed:
             // https://github.com/ziglang/zig/issues/24024
-            step.root_module.addSystemFrameworkPath(.{ .cwd_relative = native.framework });
-            step.root_module.addSystemIncludePath(.{ .cwd_relative = native.system_include });
-            step.root_module.addLibraryPath(.{ .cwd_relative = native.library });
+            step.root_module.addSystemFrameworkPath(b.graph.cwdRelativePath(native.framework));
+            step.root_module.addSystemIncludePath(b.graph.cwdRelativePath(native.system_include));
+            step.root_module.addLibraryPath(b.graph.cwdRelativePath(native.library));
         },
-        .cross => |cross| {
-            step.setLibCFile(cross.libc);
-        },
+        .cross => {},
     }
 }
